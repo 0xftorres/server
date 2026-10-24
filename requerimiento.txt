@@ -1,0 +1,179 @@
+3.2. Requerimientos Funcionales
+3.2.1 Requerimientos de usuarios
+RF001: El sistema debe permitir registrar usuarios.
+RF002: El sistema debe permitir modificar usuarios.
+RF003: El sistema debe permitir consultar usuarios.
+RF004: El sistema debe permitir eliminar usuarios.
+RF005: El sistema debe permitir imprimir los datos de los usuarios.
+3.2.2 Requerimientos de canchas
+RF006: El sistema debe permitir registrar canchas.
+RF007: El sistema debe permitir modificar canchas.
+RF008: El sistema debe permitir consultar canchas.
+RF009: El sistema debe permitir eliminar canchas.
+RF010: El sistema debe permitir imprimir reporte de canchas.
+3.2.3 Requerimientos de tipos de cancha
+RF011: El sistema debe permitir registrar tipos de cancha.
+RF012: El sistema debe permitir modificar tipos de cancha.
+RF013: El sistema debe permitir consultar tipos de cancha.
+RF014: El sistema debe permitir eliminar tipos de cancha.
+RF015: El sistema debe permitir imprimir reporte de tipos de cancha.
+3.2.4 Requerimientos de disponibilidad de canchas
+RF016: El sistema debe permitir registrar horarios disponibles de las canchas.
+RF017: El sistema debe permitir modificar horarios disponibles de las canchas.
+RF018: El sistema debe permitir consultar horarios disponibles de las canchas.
+RF019: El sistema debe permitir imprimir reporte de horarios disponibles de las canchas.
+3.2.5 Requerimientos de reservas
+RF020: El sistema debe permitir registrar reservas.
+RF021: El sistema debe permitir modificar reservas.
+RF022: El sistema debe permitir consultar reservas.
+RF023: El sistema debe permitir eliminar reservas.
+RF024: El sistema debe permitir imprimir reporte de reservas.
+RF025: El sistema debe permitir consultar la disponibilidad de las canchas.
+3.2.6 Requerimientos de stock
+RF026: El sistema debe permitir registrar el stock disponible de productos.
+RF027: El sistema debe permitir modificar el stock disponible de productos.
+RF028: El sistema debe permitir consultar el stock disponible de productos.
+RF029: El sistema debe permitir imprimir reporte de stock disponible de productos.
+RF030: El sistema debe permitir registrar productos.
+RF031: El sistema debe permitir modificar productos.
+RF032: El sistema debe permitir consultar productos.
+RF033: El sistema debe permitir eliminar productos.
+RF034: El sistema debe permitir imprimir reporte de productos.
+3.2.7 Requerimientos de torneos
+RF035: El sistema debe permitir registrar torneos del club.
+RF036: El sistema debe permitir modificar torneos del club.
+RF037: El sistema debe permitir consultar torneos del club.
+RF038: El sistema debe permitir eliminar torneos del club.
+RF039: El sistema debe permitir imprimir reporte de torneos del club.
+RF040: El sistema debe permitir consultar cuadro de torneos.
+RF041: El sistema debe permitir registrar el documento del reglamento interno del club específico para cada torneo.
+3.2.8 Requerimientos de ligas
+RF042: El sistema debe permitir registrar ligas del club.
+RF043: El sistema debe permitir modificar ligas del club.
+RF044: El sistema debe permitir consultar ligas del club.
+RF045: El sistema debe permitir eliminar ligas del club.
+RF046: El sistema debe permitir imprimir reporte de ligas del club.
+RF047: El sistema debe permitir consultar cuadro de ligas.
+RF048: El sistema debe permitir registrar el documento del reglamento interno del club específico para cada liga.
+3.2.9 Requerimientos de inscripciones a competencias
+RF049: El sistema debe permitir registrar inscripciones a ligas.
+RF050: El sistema debe permitir consultar inscripciones a ligas.
+RF051: El sistema debe permitir eliminar inscripciones a ligas.
+RF052: El sistema debe permitir imprimir reporte de inscripciones a ligas.
+RF053: El sistema debe permitir registrar inscripciones a torneos.
+RF054: El sistema debe permitir consultar inscripciones a torneos.
+RF055: El sistema debe permitir eliminar inscripciones a torneos.
+RF056: El sistema debe permitir imprimir reporte de inscripciones a torneos.
+
+3.2.10 Requerimientos de enfrentamientos
+RF057: El sistema debe permitir registrar enfrentamientos.
+RF058: El sistema debe permitir modificar enfrentamientos.
+RF059: El sistema debe permitir consultar enfrentamientos.
+RF060: El sistema debe permitir imprimir reporte de enfrentamientos.
+3.2.11 Requerimientos de tipo de competencias
+RF061: El sistema debe permitir registrar tipos de competencias organizadas.
+RF062: El sistema debe permitir modificar tipos de competencias organizadas.
+RF063: El sistema debe permitir consultar tipos de competencias organizadas.
+RF064: El sistema debe permitir eliminar tipos de competencias organizadas.
+RF065: El sistema debe permitir imprimir reporte de tipos de competencias organizadas.
+3.2.12 Requerimientos de clases
+RF066: El sistema debe permitir registrar clases.
+RF067: El sistema debe permitir modificar clases.
+RF068: El sistema debe permitir consultar clases.
+RF069: El sistema debe permitir eliminar clases.
+RF070: El sistema debe permitir imprimir reporte de clases.
+RF071: El sistema debe permitir registrar inscripciones a clases.
+RF072: El sistema debe permitir consultar inscripciones a clases.
+RF073: El sistema debe permitir eliminar inscripciones a clases.
+RF074: El sistema debe permitir imprimir reporte de inscripciones a clases.
+RF075: El sistema debe permitir registrar turnos de clases particulares.
+RF076: El sistema debe permitir modificar turnos de clases particulares.
+RF077: El sistema debe permitir consultar turnos de clases particulares.
+RF078: El sistema debe permitir imprimir reporte de turnos de clases particulares.
+3.2.13 Requerimientos de entrenamientos
+RF079: El sistema debe permitir registrar entrenamientos.
+RF080: El sistema debe permitir modificar entrenamientos.
+RF081: El sistema debe permitir consultar entrenamientos.
+RF082: El sistema debe permitir eliminar entrenamientos.
+RF083: El sistema debe permitir imprimir reporte de entrenamientos.
+RF084: El sistema debe permitir registrar inscripciones a entrenamientos.
+RF085: El sistema debe permitir consultar inscripciones a entrenamientos.
+RF086: El sistema debe permitir eliminar inscripciones a entrenamientos.
+RF087: El sistema debe permitir imprimir reporte de inscripciones a entrenamientos.
+RF088: El sistema debe permitir registrar turnos de entrenamientos particulares.
+RF089: El sistema debe permitir modificar turnos de entrenamientos particulares.
+RF090: El sistema debe permitir consultar turnos de entrenamientos particulares.
+RF091: El sistema debe permitir imprimir reporte de turnos de entrenamientos particulares.
+3.2.14 Requerimientos de asistencias
+RF092: El sistema debe permitir registrar asistencias a clase.
+RF093: El sistema debe permitir modificar asistencias a clase.
+RF094: El sistema debe permitir consultar asistencias a clase.
+RF095: El sistema debe permitir imprimir reporte de asistencias a clase.
+RF096: El sistema debe permitir registrar asistencias a entrenamiento.
+RF097: El sistema debe permitir modificar asistencias a entrenamiento.
+RF098: El sistema debe permitir consultar asistencias a entrenamiento.
+RF099: El sistema debe permitir imprimir reporte de asistencias a entrenamiento.
+3.2.15 Requerimientos de profesores
+RF100: El sistema debe permitir registrar el alta de los profesores certificados.
+RF101: El sistema debe permitir modificar el alta de los profesores certificados.
+RF102: El sistema debe permitir consultar el alta de los profesores certificados.
+RF103: El sistema debe permitir imprimir reporte de altas de profesores certificados.
+RF104: El sistema debe permitir registrar horarios disponibles de los profesores.
+RF105: El sistema debe permitir modificar horarios disponibles de los profesores.
+RF106: El sistema debe permitir consultar horarios disponibles de los profesores.
+RF107: El sistema debe permitir imprimir reporte de horarios disponibles de los profesores.
+
+3.2.16 Requerimientos de entrenadores
+RF108: El sistema debe permitir registrar el alta de los entrenadores certificados.
+RF109: El sistema debe permitir modificar el alta de los entrenadores certificados.
+RF110: El sistema debe permitir consultar el alta de los entrenadores certificados.
+RF111: El sistema debe permitir imprimir reporte de altas de entrenadores certificados.
+RF112: El sistema debe permitir registrar horarios disponibles de los entrenadores.
+RF113: El sistema debe permitir modificar horarios disponibles de los entrenadores.
+RF114: El sistema debe permitir consultar horarios disponibles de los entrenadores.
+RF115: El sistema debe permitir imprimir reporte de horarios disponibles de los entrenadores.
+3.2.17 Requerimientos de certificados
+RF116: El sistema debe permitir registrar la certificación deportiva de los profesores.
+RF117: El sistema debe permitir modificar la certificación deportiva de los profesores.
+RF118: El sistema debe permitir consultar la certificación deportiva de los profesores.
+RF119: El sistema debe permitir imprimir reporte de las certificaciones deportivas de profesores.
+RF121: El sistema debe permitir registrar la certificación deportiva de los entrenadores.
+RF122: El sistema debe permitir modificar la certificación deportiva de los entrenadores.
+RF123: El sistema debe permitir consultar la certificación deportiva de los entrenadores.
+RF124: El sistema debe permitir imprimir reporte de las certificaciones deportivas de entrenadores.
+3.2.18 Requerimientos de cobros
+RF125: El sistema debe permitir registrar facturas.
+RF126: El sistema debe permitir consultar facturas.
+RF127: El sistema debe permitir imprimir reporte de facturas.
+RF128: El sistema debe permitir registrar cobros mediante tarjeta de débito.
+RF129: El sistema debe permitir registrar cobros mediante tarjeta de crédito.
+RF130: El sistema debe permitir registrar cobros mediante billeteras electrónicas.
+RF131: El sistema debe permitir registrar reembolsos.
+RF132: El sistema debe permitir consultar reembolsos.
+RF133: El sistema debe permitir imprimir reporte de reembolsos.
+3.2.19 Requerimientos de recibos
+RF134: El sistema debe permitir registrar recibos de pago.
+RF135: El sistema debe permitir consultar recibos de pago.
+RF136: El sistema debe permitir imprimir reporte de recibos de pago.
+RF137: El sistema debe permitir generar reportes de ingresos.
+3.2.20 Requerimientos de descuentos
+RF138: El sistema debe permitir registrar descuentos de un usuario.
+RF139: El sistema debe permitir modificar descuentos de un usuario.
+RF140: El sistema debe permitir consultar descuentos de un usuario.
+RF141: El sistema debe permitir eliminar descuentos de un usuario.
+RF142: El sistema debe permitir imprimir reporte de descuentos.
+
+3.4. Requerimientos de dominio
+
+RD01: No se confirman reservas pendientes de pago.
+RD02: Las cancelaciones deben realizarse con un mínimo de antelación establecido.
+RD03: Si las cancelaciones se realizan fuera del plazo establecido, se aplica un cargo al usuario.
+RD04: Si la cancelación se realiza dentro del plazo de antelación, se procesa un reembolso total o parcial según la política de reembolsos del club.
+RD05: Los clientes pueden reservar canchas con una antelación máxima establecida por el club.
+RD06: Una cancha bloqueada por mantenimiento no puede ser reservada durante el período de bloqueo.
+RD07: Cada clase o entrenamiento grupal tiene un cupo máximo de 30 alumnos.
+RD08: Los profesores y entrenadores deben presentar obligatoriamente el Título Habilitante que los autoriza a dar la clase.
+RD09: Todos los profesores y entrenadores deben poseer la certificación deportiva correspondiente.
+RD10: El número máximo de alumnos por clase o entrenamiento grupal debe ser configurable por tipo de clase/cancha.
+RD11: Los medios de cobranza contemplados son tarjeta de débito, tarjeta de crédito y cualquier billetera virtual.
+RD12: Todos las competencias organizadas por el club se rigen por las reglas oficiales de la Asociación de Tenis, complementadas por reglamentos internos específicos del club para cada competencia.

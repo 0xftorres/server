@@ -1,0 +1,3 @@
+[env]
+# libsqlite3-sys busca sqlite3.dll en este directorio (relativo a la carpeta api/)
+SQLITE3_LIB_DIR = { value = "lib", relative = true }
