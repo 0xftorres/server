@@ -157,6 +157,9 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 		}
 		d["email"] = email
 		defaultStr(d, "role", "client")
+		if err := a.checkCoachUser(d); err != nil {
+			return nil, err
+		}
 		if s(d, "memberNumber") == "" {
 			if s(d, "role") == "admin" {
 				d["memberNumber"] = fmt.Sprintf("ADM-%03d", admins+1)
@@ -273,9 +276,15 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 		defaultVal(d, "currentEnrolled", 0)
 		defaultVal(d, "students", []any{})
 		defaultVal(d, "sessions", []any{"02/10", "04/10", "09/10", "11/10", "16/10", "18/10", "23/10", "25/10"})
+		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
+		}
 	case "clases-particulares":
 		defaultStr(d, "kind", "clase")
 		defaultStr(d, "status", "programada")
+		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
+		}
 	case "recibos":
 		defaultStr(d, "date", nowStamp())
 		defaultStr(d, "status", "completado")
@@ -331,6 +340,9 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 			return nil, conflict("Ya existe otro usuario con ese email.")
 		}
 		d["email"] = email
+		if err := a.checkCoachUser(d); err != nil {
+			return nil, err
+		}
 	case "stock":
 		total := f(d, "totalStock")
 		inUse := f(d, "inUseStock")
@@ -359,6 +371,13 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 		}
 		if capacity <= 0 {
 			d["maxCapacity"] = 30
+		}
+		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
+		}
+	case "clases-particulares":
+		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
 		}
 	case "descuentos":
 		code := strings.ToUpper(strings.TrimSpace(s(d, "code")))
@@ -421,9 +440,12 @@ func (a *app) checkDelete(col string, doc M) error {
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
-func (a *app) listCollection(col string) (int, any, error) {
+func (a *app) listCollection(c Claims, col string) (int, any, error) {
 	if err := validateCollection(col); err != nil {
 		return 0, nil, err
+	}
+	if !c.staff() && slices.Contains(staffCollections, col) {
+		return 0, nil, errStaffOnly
 	}
 	docs, err := a.store.list(col)
 	if err != nil {
@@ -432,11 +454,11 @@ func (a *app) listCollection(col string) (int, any, error) {
 	for _, d := range docs {
 		sanitize(col, d)
 	}
-	return http.StatusOK, docs, nil
+	return http.StatusOK, visibleAll(c, col, docs), nil
 }
 
 func (a *app) list(r *http.Request) (int, any, error) {
-	return a.listCollection(r.PathValue("collection"))
+	return a.listCollection(claimsOf(r), r.PathValue("collection"))
 }
 
 func (a *app) getOne(r *http.Request) (int, any, error) {
@@ -448,6 +470,10 @@ func (a *app) getOne(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	doc = visible(claimsOf(r), col, doc)
+	if doc == nil {
+		return 0, nil, forbidden("No tenés acceso a este registro.")
+	}
 	return http.StatusOK, sanitize(col, doc), nil
 }
 
@@ -458,6 +484,9 @@ func (a *app) create(r *http.Request) (int, any, error) {
 	}
 	body, err := readObject(r)
 	if err != nil {
+		return 0, nil, err
+	}
+	if err := guardCreate(claimsOf(r), col, body); err != nil {
 		return 0, nil, err
 	}
 	if col == "reservas" {
@@ -491,6 +520,9 @@ func (a *app) update(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
+	if err := guardUpdate(claimsOf(r), col, existing, body); err != nil {
+		return 0, nil, err
+	}
 	doc, err := a.applyUpdateRules(col, existing, body)
 	if err != nil {
 		return 0, nil, err
@@ -508,6 +540,9 @@ func (a *app) remove(r *http.Request) (int, any, error) {
 	}
 	doc, err := a.store.require(col, id)
 	if err != nil {
+		return 0, nil, err
+	}
+	if err := guardDelete(claimsOf(r), col, doc); err != nil {
 		return 0, nil, err
 	}
 	if err := a.checkDelete(col, doc); err != nil {

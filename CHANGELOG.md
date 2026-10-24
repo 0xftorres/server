@@ -2,6 +2,19 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado semántico.
 
+## [Sin publicar]
+
+### Agregado
+- Roles Profesor y Entrenador: usuarios vinculados a una ficha de `profesores`. Un profesor solo
+  tiene clases y un entrenador solo entrenamientos (`kind`), también cuando las carga el admin.
+- `GET /api/reservas/ocupacion`: turnos tomados, sin datos de quién reservó.
+- El token incluye `dni` y `coachId`; el login también devuelve `coachId`.
+
+### Cambiado
+- Permisos por rol en todas las rutas (`authz.go`). Antes cualquier usuario logueado podía
+  modificar todo. Un socio ve solo sus reservas y recibos y solo se inscribe a sí mismo; un
+  profesional ve y gestiona solo sus clases y su ficha.
+
 ## [2.0.0] — 2026-10-23
 
 ### Agregado

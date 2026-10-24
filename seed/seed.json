@@ -210,6 +210,48 @@
         "LIGA20"
       ],
       "totalBookings": 15
+    },
+    {
+      "id": "usr-coach-01",
+      "name": "Prof. Santiago Álvarez",
+      "dni": "27.890.123",
+      "phone": "+54 11 5566-7788",
+      "email": "santiago.alvarez@tenisahora.com",
+      "address": "",
+      "role": "coach",
+      "coachId": "coach-01",
+      "memberNumber": "DOC-01",
+      "memberSince": "2024-01-15",
+      "activeDiscounts": [],
+      "totalBookings": 0
+    },
+    {
+      "id": "usr-coach-02",
+      "name": "Entrenadora Valeria Morales",
+      "dni": "32.145.678",
+      "phone": "+54 11 4433-2211",
+      "email": "valeria.morales@tenisahora.com",
+      "address": "",
+      "role": "coach",
+      "coachId": "coach-02",
+      "memberNumber": "DOC-02",
+      "memberSince": "2024-01-15",
+      "activeDiscounts": [],
+      "totalBookings": 0
+    },
+    {
+      "id": "usr-coach-03",
+      "name": "Entrenador Lucas Delgado",
+      "dni": "29.334.881",
+      "phone": "+54 11 6677-9922",
+      "email": "lucas.delgado@tenisahora.com",
+      "address": "",
+      "role": "coach",
+      "coachId": "coach-03",
+      "memberNumber": "DOC-03",
+      "memberSince": "2024-01-15",
+      "activeDiscounts": [],
+      "totalBookings": 0
     }
   ],
   "canchas": [
@@ -1864,7 +1906,7 @@
       "id": "cls-02",
       "name": "Clínica de Iniciación y Fundamentos",
       "type": "grupal",
-      "kind": "clase",
+      "kind": "entrenamiento",
       "coachId": "coach-02",
       "coachName": "Entrenadora Valeria Morales",
       "scheduleDays": "Lunes y Miércoles",

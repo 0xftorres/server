@@ -50,7 +50,13 @@ Todos los usuarios del seed tienen contraseña **`123456`**.
 |---|---|
 | `admin@tenisahora.com` | Empleado (panel de administración) |
 | `socio@tenisahora.com` | Socio |
+| `santiago.alvarez@tenisahora.com` | Profesor (da clases) |
+| `valeria.morales@tenisahora.com`, `lucas.delgado@tenisahora.com` | Entrenador (da entrenamientos) |
 | cualquier otro de `seed/seed.json` → `usuarios` | Socio |
+
+Un usuario profesional tiene `role: "coach"` y un `coachId` que apunta a su ficha en `profesores`;
+el rol del token (Profesor o Entrenador) sale del `type` de esa ficha. Los permisos de cada rol
+están en `authz.go`.
 
 `POST /api/admin/reset` vacía la base y recarga el seed (solo rol Empleado; otro rol → 403).
 

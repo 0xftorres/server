@@ -22,11 +22,13 @@ const (
 )
 
 type Claims struct {
-	Sub   string `json:"sub"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
-	Iat   int64  `json:"iat"`
-	Exp   int64  `json:"exp"`
+	Sub     string `json:"sub"`
+	Email   string `json:"email"`
+	Role    string `json:"role"`
+	Dni     string `json:"dni,omitempty"`
+	CoachID string `json:"coachId,omitempty"`
+	Iat     int64  `json:"iat"`
+	Exp     int64  `json:"exp"`
 }
 
 type claimsKey struct{}
@@ -103,14 +105,22 @@ func hashPassword(plain string) string {
 	return string(h)
 }
 
-func backendRole(user M) string {
+// backendRole traduce el rol del usuario; el de un profesional sale del tipo de su ficha.
+func (a *app) backendRole(user M) (string, error) {
 	switch s(user, "role") {
 	case "admin":
-		return "Empleado"
+		return rolEmpleado, nil
 	case "coach":
-		return "Profesor"
+		coach, err := a.store.require("profesores", s(user, "coachId"))
+		if err != nil {
+			return "", err
+		}
+		if s(coach, "type") == rolEntrenador {
+			return rolEntrenador, nil
+		}
+		return rolProfesor, nil
 	}
-	return "Socio"
+	return rolSocio, nil
 }
 
 func splitName(user M) (string, string) {
@@ -123,15 +133,21 @@ func splitName(user M) (string, string) {
 }
 
 // authResponse tiene la misma forma que el `AuthResponseDto` del backend .NET original, más `dni` y `memberNumber`.
-func (a *app) authResponse(user M) M {
+func (a *app) authResponse(user M) (M, error) {
 	nombre, apellido := splitName(user)
+	role, err := a.backendRole(user)
+	if err != nil {
+		return nil, err
+	}
 	now := nowMillis() / 1000
 	claims := Claims{
-		Sub:   s(user, "id"),
-		Email: s(user, "email"),
-		Role:  backendRole(user),
-		Iat:   now,
-		Exp:   now + tokenTTLSecs,
+		Sub:     s(user, "id"),
+		Email:   s(user, "email"),
+		Role:    role,
+		Dni:     s(user, "dni"),
+		CoachID: s(user, "coachId"),
+		Iat:     now,
+		Exp:     now + tokenTTLSecs,
 	}
 	return M{
 		"token":          signToken(a.jwtSecret, claims),
@@ -141,11 +157,12 @@ func (a *app) authResponse(user M) M {
 		"email":          s(user, "email"),
 		"numeroTelefono": s(user, "phone"),
 		"direccion":      s(user, "address"),
-		"rol":            backendRole(user),
+		"rol":            role,
 		"dni":            s(user, "dni"),
+		"coachId":        s(user, "coachId"),
 		"memberNumber":   s(user, "memberNumber"),
 		"expiraEn":       claims.Exp,
-	}
+	}, nil
 }
 
 // POST /api/auth/login
@@ -170,7 +187,11 @@ func (a *app) login(r *http.Request) (int, any, error) {
 		if hash == "" || bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) != nil {
 			break
 		}
-		return http.StatusOK, a.authResponse(u), nil
+		res, err := a.authResponse(u)
+		if err != nil {
+			return 0, nil, err
+		}
+		return http.StatusOK, res, nil
 	}
 	return 0, nil, unauthorized("Credenciales inválidas.")
 }
@@ -222,7 +243,11 @@ func (a *app) register(r *http.Request) (int, any, error) {
 	if err := a.store.insert("usuarios", user); err != nil {
 		return 0, nil, err
 	}
-	return http.StatusCreated, a.authResponse(user), nil
+	res, err := a.authResponse(user)
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusCreated, res, nil
 }
 
 // GET /api/auth/yo — devuelve los claims del token (útil para probar la autenticación).

@@ -43,6 +43,11 @@ def check(name, cond, detail=""):
     print(f"[{mark}] {name}{(' - ' + detail) if detail else ''}")
 
 
+def login_as(email, full=False):
+    st, auth = call("POST", "/auth/login", {"email": email, "password": "123456"}, auth=False, expect=200)
+    return (auth["token"], auth) if full else auth["token"]
+
+
 def main():
     global TOKEN
     st, h = call("GET", "/health", auth=False, expect=200)
@@ -195,6 +200,74 @@ def main():
 
     st, _ = call("GET", "/coleccion-inexistente")
     check("colección inexistente -> 404", st == 404)
+
+    # Permisos por rol
+    call("POST", "/admin/reset", expect=200)
+    st, _ = call("POST", "/clases", {"name": "X", "kind": "clase", "coachId": "coach-02"})
+    check("clase asignada a un entrenador -> 400", st == 400)
+    st, _ = call("POST", "/usuarios", {"name": "P", "email": "p@test.com", "role": "coach"})
+    check("usuario profesional sin ficha -> 400", st == 400)
+
+    TOKEN = login_as("socio@tenisahora.com")
+    socio_dni = "38.452.129"
+    st, _ = call("GET", "/usuarios")
+    check("socio no ve usuarios -> 403", st == 403)
+    st, _ = call("PUT", "/usuarios/usr-01", {"role": "admin"})
+    check("socio no se cambia el rol -> 403", st == 403)
+    st, _ = call("POST", "/canchas", {"name": "X"})
+    check("socio no crea canchas -> 403", st == 403)
+    st, mine = call("GET", "/reservas", expect=200)
+    check("socio ve solo sus reservas", mine and all(r["participants"][0]["dni"] == socio_dni for r in mine), f"{len(mine)} reservas")
+    st, occ = call("GET", "/reservas/ocupacion", expect=200)
+    check("ocupación muestra turnos ajenos sin datos personales", len(occ) > len(mine) and all("participants" not in r for r in occ))
+    st, recs = call("GET", "/recibos", expect=200)
+    check("socio ve solo sus recibos", recs and all(r["clientDni"] == socio_dni for r in recs))
+    st, clases = call("GET", "/clases", expect=200)
+    check("socio ve clases sin alumnos", clases and all("students" not in c for c in clases))
+    own_booking = dict(booking, participants=[{"name": "Federico Gómez", "dni": socio_dni}])
+    st, _ = call("POST", "/reservas", dict(booking, participants=[{"name": "Otro", "dni": "1"}]))
+    check("socio no reserva a nombre de otro -> 403", st == 403)
+    st, own = call("POST", "/reservas", own_booking, expect=201)
+    st, _ = call("POST", "/reservas/RES-2026-002/cancelar", {"hoursInAdvance": 10})
+    check("socio no cancela reservas ajenas -> 403", st == 403)
+    st, _ = call("POST", f"/reservas/{own['data']['id']}/cancelar", {"hoursInAdvance": 10})
+    check("socio cancela su reserva", st == 200)
+    st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Otro", "dni": "1"})
+    check("socio no inscribe a otro -> 403", st == 403)
+    st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Federico Gómez", "dni": socio_dni})
+    check("socio se inscribe a un torneo", st == 201)
+    st, _ = call("POST", "/clases/cls-01/alumnos", {"name": "Federico Gómez", "dni": socio_dni})
+    check("socio se inscribe a una clase", st == 201)
+    st, _ = call("POST", "/clases/cls-01/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
+    check("socio no toma asistencia -> 403", st == 403)
+    lesson = {"coachId": "coach-01", "coachName": "Prof. Santiago Álvarez", "studentName": "Federico Gómez", "studentDni": socio_dni, "date": "2026-11-12", "time": "10:00"}
+    st, _ = call("POST", "/clases-particulares", dict(lesson, kind="clase"))
+    check("socio pide clase particular a un profesor", st == 201)
+    st, _ = call("POST", "/clases-particulares", dict(lesson, kind="entrenamiento"))
+    check("entrenamiento con un profesor -> 400", st == 400)
+
+    TOKEN, prof = login_as("santiago.alvarez@tenisahora.com", full=True)
+    check("login profesor", prof["rol"] == "Profesor" and prof["coachId"] == "coach-01")
+    st, clases = call("GET", "/clases", expect=200)
+    check("profesor ve solo sus clases, con alumnos", clases and all(c["coachId"] == "coach-01" and "students" in c for c in clases))
+    st, _ = call("GET", "/reservas")
+    check("profesor no ve reservas -> 403", st == 403)
+    st, _ = call("POST", "/clases/cls-01/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
+    check("profesor toma asistencia en su clase", st == 200)
+    st, _ = call("POST", "/clases/cls-04/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
+    check("profesor no toma asistencia en clase ajena -> 403", st == 403)
+    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02", kind="entrenamiento"), expect=201)
+    check("clase particular del profesor queda a su nombre y como clase", p["coachId"] == "coach-01" and p["kind"] == "clase")
+    st, c1 = call("PUT", "/profesores/coach-01", {"specialty": "Smoke", "type": "Entrenador"}, expect=200)
+    check("profesor edita su ficha sin cambiar su tipo", c1["specialty"] == "Smoke" and c1["type"] == "Profesor")
+    st, _ = call("PUT", "/profesores/coach-02", {"specialty": "Smoke"})
+    check("profesor no edita fichas ajenas -> 403", st == 403)
+
+    TOKEN, ent = login_as("valeria.morales@tenisahora.com", full=True)
+    check("login entrenador", ent["rol"] == "Entrenador")
+    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02"), expect=201)
+    check("clase particular del entrenador queda como entrenamiento", p["kind"] == "entrenamiento")
+    TOKEN = admin_token
 
     # Dejar la base limpia
     call("POST", "/admin/reset", expect=200)

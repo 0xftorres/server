@@ -194,9 +194,30 @@ func (a *app) createReservation(r *http.Request) (int, any, error) {
 	return http.StatusCreated, res, nil
 }
 
-// GET /api/reservas
+// GET /api/reservas — el personal ve todas; un socio, solo las suyas.
 func (a *app) listReservations(r *http.Request) (int, any, error) {
-	return a.listCollection("reservas")
+	return a.listCollection(claimsOf(r), "reservas")
+}
+
+// GET /api/reservas/ocupacion — turnos tomados de todas las reservas activas, sin datos de quién
+// reservó, para que un socio vea qué horarios están libres.
+func (a *app) reservationsOccupancy(r *http.Request) (int, any, error) {
+	docs, err := a.store.list("reservas")
+	if err != nil {
+		return 0, nil, err
+	}
+	out := []M{}
+	for _, d := range docs {
+		if s(d, "status") == "cancelada" {
+			continue
+		}
+		slot := M{}
+		for _, k := range []string{"id", "courtId", "courtName", "date", "startTime", "endTime", "durationHours", "status"} {
+			slot[k] = d[k]
+		}
+		out = append(out, slot)
+	}
+	return http.StatusOK, out, nil
 }
 
 // recalculateReservation recalcula hora de fin, costo y saldo al modificar una reserva (PUT /api/reservas/{id}).
@@ -319,9 +340,9 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 	}
 	res["status"] = "cancelada"
 	res["cancellationDetails"] = M{
-		"cancelledAt":   nowISO(),
+		"cancelledAt":    nowISO(),
 		"hoursInAdvance": hours,
-		"policyApplied": policy,
+		"policyApplied":  policy,
 	}
 	if err := a.store.upsert("reservas", res); err != nil {
 		return 0, nil, err
@@ -846,12 +867,12 @@ func (a *app) classUnenroll(r *http.Request) (int, any, error) {
 	return http.StatusOK, M{"success": true}, nil
 }
 
-func (a *app) attendanceResponse() (int, any, error) {
+func (a *app) attendanceResponse(r *http.Request) (int, any, error) {
 	classes, err := a.store.list("clases")
 	if err != nil {
 		return 0, nil, err
 	}
-	return http.StatusOK, M{"success": true, "classes": classes}, nil
+	return http.StatusOK, M{"success": true, "classes": visibleAll(claimsOf(r), "clases", classes)}, nil
 }
 
 func padAttendance(att []any, idx int) []any {
@@ -887,7 +908,7 @@ func (a *app) classToggleAttendance(r *http.Request) (int, any, error) {
 	if err := a.store.upsert("clases", cls); err != nil {
 		return 0, nil, err
 	}
-	return a.attendanceResponse()
+	return a.attendanceResponse(r)
 }
 
 // POST /api/clases/{id}/asistencia/sesion  { sessionIndex, status }
@@ -914,7 +935,7 @@ func (a *app) classBulkAttendance(r *http.Request) (int, any, error) {
 	if err := a.store.upsert("clases", cls); err != nil {
 		return 0, nil, err
 	}
-	return a.attendanceResponse()
+	return a.attendanceResponse(r)
 }
 
 // POST /api/clases/{id}/asistencia/registrar  { studentId, status } — agrega una sesión al alumno.
