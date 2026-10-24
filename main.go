@@ -239,6 +239,7 @@ func (a *app) routes(frontendDist string) http.Handler {
 	protected("POST /api/facturas/{id}/anular", guard(staffOnly, a.invoiceAnnul))
 	protected("PATCH /api/reembolsos/{id}/estado", guard(staffOnly, a.refundStatus))
 	protected("PUT /api/usuarios/{id}/descuentos", guard(staffOnly, a.userDiscounts))
+	protected("GET /api/socios", guard(membersAndStaff, a.listMembers))
 	// CRUD genérico: los permisos por colección están en guardCreate / guardUpdate / guardDelete y visible.
 	// CRUD genérico
 	protected("GET /api/{collection}", a.list)

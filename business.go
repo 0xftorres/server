@@ -1372,6 +1372,23 @@ func (a *app) refundStatus(r *http.Request) (int, any, error) {
 	return http.StatusOK, ref, nil
 }
 
+// GET /api/socios: padrón reducido para elegir compañeros al reservar. Solo lo necesario para
+// registrar a un participante; teléfono, email y dirección quedan para el personal.
+func (a *app) listMembers(_ *http.Request) (int, any, error) {
+	users, err := a.store.list("usuarios")
+	if err != nil {
+		return 0, nil, err
+	}
+	out := []M{}
+	for _, u := range users {
+		if s(u, "role") != "client" {
+			continue
+		}
+		out = append(out, M{"id": u["id"], "name": u["name"], "dni": u["dni"], "memberNumber": u["memberNumber"]})
+	}
+	return http.StatusOK, out, nil
+}
+
 // PUT /api/usuarios/{id}/descuentos  { activeDiscounts: ["PAQ10", ...] }
 func (a *app) userDiscounts(r *http.Request) (int, any, error) {
 	body, err := readJSON(r)

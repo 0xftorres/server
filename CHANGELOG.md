@@ -8,6 +8,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 - Roles Profesor y Entrenador: usuarios vinculados a una ficha de `profesores`. Un profesor solo
   tiene clases y un entrenador solo entrenamientos (`kind`), también cuando las carga el admin.
 - `GET /api/reservas/ocupacion`: turnos tomados, sin datos de quién reservó.
+- `GET /api/socios`: padrón reducido (id, nombre, DNI, N° de socio) para elegir compañeros al
+  reservar. Lo consultan socios y personal.
 - El token incluye `dni` y `coachId`; el login también devuelve `coachId`.
 - `GET` / `PUT /api/configuracion`: plazo de cancelación sin cargo, retención por cancelación
   tardía y antelación máxima de reserva (RD02–RD05). Sin documento guardado rigen 6 hs / 50% / 30 días.
