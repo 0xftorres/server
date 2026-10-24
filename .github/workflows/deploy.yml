@@ -1,0 +1,69 @@
+name: Deploy Directo a VPS (Sin Registry)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir imagen y exportar a archivo .tar
+        run: |
+          docker build -f ci/Dockerfile -t tenisahora-api:latest .
+          docker save tenisahora-api:latest | gzip > tenisahora-api.tar.gz
+
+      - name: Transferir imagen comprimida al VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          source: "tenisahora-api.tar.gz"
+          target: "/tmp/"
+
+      - name: Cargar e iniciar contenedor en el VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || '22' }}
+          script: |
+            # 1. Cargar la nueva imagen en el Docker del VPS
+            gunzip -c /tmp/tenisahora-api.tar.gz | docker load
+            rm -f /tmp/tenisahora-api.tar.gz
+
+            # 2. Detener y remover el contenedor anterior si existe
+            docker stop tenisahora-api || true
+            docker rm tenisahora-api || true
+
+            # 3. Crear el directorio de la base y asegurar existencia de .env en /home/devops
+            mkdir -p /home/devops/tenisahora-api/data
+            touch /home/devops/tenisahora-api/.env
+            chown -R 1000:1000 /home/devops/tenisahora-api/data /home/devops/tenisahora-api/.env 2>/dev/null || chmod -R 777 /home/devops/tenisahora-api/data
+
+            # 4. Asegurar existencia de la red interna de Docker compartida con Caddy
+            docker network create caddy-net 2>/dev/null || true
+
+            # 5. Levantar el contenedor en la red privada interna (sin exponer puertos al host/internet).
+            #    Caddy publica https://tenisahora-api.duckdns.org -> tenisahora-api:5090
+            docker run -d \
+              --name tenisahora-api \
+              --restart always \
+              --network caddy-net \
+              -v /home/devops/tenisahora-api/data:/app/data \
+              -v /home/devops/tenisahora-api/.env:/app/.env:ro \
+              tenisahora-api:latest
+
+            # 6. Limpiar imágenes no utilizadas
+            docker image prune -f

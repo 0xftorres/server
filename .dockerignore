@@ -1,0 +1,11 @@
+.git
+.github
+data/
+.env
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.pdf
+tests/
+tenis-ahora-api
+tenis-ahora-api.exe

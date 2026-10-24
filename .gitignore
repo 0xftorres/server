@@ -1,4 +1,5 @@
-target/
+tenis-ahora-api
+tenis-ahora-api.exe
 data/
 .env
 *.sqlite

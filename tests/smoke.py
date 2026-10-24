@@ -187,6 +187,10 @@ def main():
     check("borrar descuento lo quita del usuario (cascada)", u3["activeDiscounts"] == ["PAQ10"])
     st, login = call("POST", "/auth/login", {"email": "usmoke@test.com", "password": "123456"}, auth=False, expect=200)
     check("usuario creado por admin inicia sesión con contraseña por defecto", login["rol"] == "Socio")
+    admin_token, TOKEN = TOKEN, login["token"]
+    st, _ = call("POST", "/admin/reset")
+    check("reset con rol Socio -> 403", st == 403)
+    TOKEN = admin_token
     call("DELETE", f"/usuarios/{u['id']}", expect=200)
 
     st, _ = call("GET", "/coleccion-inexistente")

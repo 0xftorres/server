@@ -2,6 +2,27 @@
 
 Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado semántico.
 
+## [2.0.0] — 2026-10-23
+
+### Agregado
+- Deploy con Docker: `ci/Dockerfile` y `.github/workflows/deploy.yml` (build en GitHub Actions,
+  copia de la imagen por SSH al VPS y contenedor en `caddy-net` detrás de Caddy en
+  `tenisahora-api.duckdns.org`).
+
+### Cambiado
+- La API se reescribió en Go (`net/http` de la librería estándar + `modernc.org/sqlite`). Se
+  mantienen las rutas, los cuerpos de respuesta, los mensajes de error y el esquema de la base;
+  una base creada por la versión Rust sigue siendo válida (incluidos los hashes bcrypt).
+- El build ya no necesita MinGW ni `lib/sqlite3.dll`: SQLite es Go puro (sin cgo).
+- Un cuerpo JSON inválido o con tipos incorrectos responde 400 con `{ error }` (antes 415/422
+  de axum).
+- `POST /api/admin/reset` exige rol Empleado; con otro rol responde 403.
+- El log de requests es fijo (método, ruta, status, duración); `RUST_LOG` ya no se usa.
+
+### Quitado
+- Código Rust (`src/`, `Cargo.toml`, `Cargo.lock`, `build.rs`, `.cargo/`), `lib/sqlite3.dll`
+  y los scripts `build.ps1` / `run.ps1`.
+
 ## [1.0.0] — 2026-10-23
 
 ### Agregado

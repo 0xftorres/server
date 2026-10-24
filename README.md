@@ -1,4 +1,4 @@
-# Tenis Ahora — API de prueba (Rust + SQLite)
+# Tenis Ahora — API de prueba (Go + SQLite)
 
 Servidor HTTP liviano para que el front (`../Tenis-Ahora-Frontend`) trabaje contra datos
 persistidos en lugar de los mocks en memoria. **Es una API de prueba**: una sola base SQLite,
@@ -10,33 +10,27 @@ alcance, los endpoints y las recomendaciones para esa versión.
 
 | Pieza | Elección |
 |---|---|
-| Lenguaje / runtime | Rust 2021, tokio |
-| HTTP | axum 0.8 + tower-http (CORS permisivo, trazas, archivos estáticos) |
-| Base de datos | SQLite 3.50 vía rusqlite, enlazado contra `lib/sqlite3.dll` (sin compilador C) |
-| Auth | bcrypt para contraseñas, JWT HS256 (hmac + sha2) |
+| Lenguaje / runtime | Go 1.22+ |
+| HTTP | `net/http` de la librería estándar (router con método y parámetros, CORS permisivo, logs, archivos estáticos) |
+| Base de datos | SQLite vía `modernc.org/sqlite` (Go puro: sin cgo, sin compilador C, sin DLL) |
+| Auth | bcrypt (`golang.org/x/crypto`) para contraseñas, JWT HS256 (`crypto/hmac`) |
 | Datos iniciales | `seed/seed.json`, exportado del mock del front |
 
 ## Requisitos
 
-- Rust estable (toolchain `x86_64-pc-windows-gnu`, el que instala rustup por defecto en Windows).
-- MinGW-w64 (WinLibs) descomprimido en `D:\fede\tools\mingw64` (o la variable `MINGW_BIN`
-  apuntando a su carpeta `bin`). `build.ps1` lo pone en el PATH: las crates `windows-sys`
-  necesitan `dlltool`/`as` al enlazar y el `ld` que trae rustup no acepta los import libs de
-  un `dlltool` más nuevo, así que se usa el toolchain completo. Descarga: https://winlibs.com
-  (zip `x86_64-posix-seh ... ucrt`), ~950 MB descomprimido.
-- No hace falta compilador C para SQLite: la DLL oficial está en `lib/`.
+- Go 1.22 o posterior.
 
 ## Puesta en marcha
 
-```powershell
-cd D:\fede\api
-.\run.ps1              # compila y levanta en http://localhost:5090/api
-.\run.ps1 -Release     # idem, binario optimizado
+```sh
+cd api
+go mod tidy            # la primera vez: descarga dependencias y genera go.sum
+go run .               # levanta en http://localhost:5090/api
+go build -o tenis-ahora-api .   # binario (en Windows: -o tenis-ahora-api.exe)
 ```
 
-`run.ps1` llama a `build.ps1`, que agrega al PATH el toolchain MinGW antes de `cargo build`.
-Desde Git Bash: `export PATH="/d/fede/tools/mingw64/bin:$PATH" && cargo build`. Para dejar todo corriendo en segundo plano (API + front) usar
-`D:\fede\start-servidor.ps1`; para detenerlo, `D:\fede\stop-servidor.ps1`.
+Para dejar todo corriendo en segundo plano (API + front) usar `D:\fede\start-servidor.ps1`;
+para detenerlo, `D:\fede\stop-servidor.ps1`.
 
 ### Variables de entorno (`.env` opcional, ver `.env.example`)
 
@@ -47,7 +41,6 @@ Desde Git Bash: `export PATH="/d/fede/tools/mingw64/bin:$PATH" && cargo build`. 
 | `SEED_PATH` | `seed/seed.json` | Datos iniciales; se cargan solo si la base está vacía. |
 | `JWT_SECRET` | valor de desarrollo | Clave HS256 de los tokens. |
 | `FRONTEND_DIST` | `../Tenis-Ahora-Frontend/dist` | Si existe `index.html` ahí, la API sirve el front en `/`. |
-| `RUST_LOG` | `info,tower_http=info` | Nivel de log. |
 
 ### Usuarios de prueba
 
@@ -59,7 +52,30 @@ Todos los usuarios del seed tienen contraseña **`123456`**.
 | `socio@tenisahora.com` | Socio |
 | cualquier otro de `seed/seed.json` → `usuarios` | Socio |
 
-`POST /api/admin/reset` vacía la base y recarga el seed.
+`POST /api/admin/reset` vacía la base y recarga el seed (solo rol Empleado; otro rol → 403).
+
+## Deploy (Docker + VPS)
+
+`.github/workflows/deploy.yml` corre en cada push a `main`: construye la imagen con
+`ci/Dockerfile`, la copia por SSH al VPS (sin registry) y reemplaza el contenedor
+`tenisahora-api` en la red `caddy-net`, sin exponer puertos. La base queda en
+`/home/devops/tenisahora-api/data` y la configuración en `/home/devops/tenisahora-api/.env`.
+
+Secrets del repo: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` y opcionalmente `VPS_PORT`.
+
+En el VPS:
+
+- Poner un `JWT_SECRET` propio en `/home/devops/tenisahora-api/.env` (si queda vacío se usa el
+  de desarrollo) y reiniciar con `docker restart tenisahora-api`.
+- Agregar al Caddyfile del Caddy que está en `caddy-net`:
+
+  ```
+  tenisahora-api.duckdns.org {
+      reverse_proxy tenisahora-api:5090
+  }
+  ```
+
+La API queda en `https://tenisahora-api.duckdns.org/api`.
 
 ## Cómo se conecta el front
 
@@ -75,7 +91,7 @@ Todos los usuarios del seed tienen contraseña **`123456`**.
 
 Todas las rutas van bajo `/api`. Salvo `health`, `auth/login` y `auth/registrar`, exigen
 `Authorization: Bearer <token>`. Los errores vuelven como `{ "error": "mensaje" }` con
-400 / 401 / 404 / 409 / 500.
+400 / 401 / 403 / 404 / 409 / 500.
 
 ### Públicos
 
@@ -109,7 +125,7 @@ alerta), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúscul
 | Método | Ruta | Cuerpo | Respuesta |
 |---|---|---|---|
 | GET | `/auth/yo` | — | claims del token |
-| POST | `/admin/reset` | — | `{ success, documents }` |
+| POST | `/admin/reset` | — | `{ success, documents }` (solo rol Empleado, 403 si no) |
 | PATCH | `/canchas/{id}/estado` | `{ status, maintenanceNotes }` | cancha |
 | PUT | `/canchas/{id}/disponibilidad` | `{ days, openTime, closeTime, slotMinutes, blockedRanges, notes }` | cancha |
 | PATCH | `/stock/{id}/ajuste` | `{ totalStock }` | ítem |
@@ -143,25 +159,24 @@ python tests\smoke.py http://otra-ip:5090/api
 ```
 
 El script recorre autenticación, CRUD, reglas de dominio y los endpoints de negocio
-(45 verificaciones) y deja la base reseteada al terminar.
+(46 verificaciones) y deja la base reseteada al terminar.
 
 ## Estructura
 
 ```
 api/
-├── Cargo.toml / build.rs / .cargo/config.toml   # build; enlaza lib/sqlite3.dll
-├── lib/sqlite3.dll, sqlite3.def                 # SQLite oficial (sqlite.org, win-x64)
-├── seed/seed.json                               # datos iniciales (del mock del front)
-├── src/
-│   ├── main.rs        # configuración, router, /health, archivos estáticos del front
-│   ├── db.rs          # Store: tabla documents (collection, id, data JSON)
-│   ├── auth.rs        # login, registro, JWT, middleware
-│   ├── crud.rs        # CRUD genérico + reglas por colección
-│   ├── business.rs    # endpoints de negocio
-│   ├── seed.rs        # carga del seed
-│   ├── error.rs       # ApiError -> { error }
-│   └── util.rs        # helpers de JSON y fechas
+├── go.mod / go.sum
+├── ci/Dockerfile      # imagen del deploy
+├── .github/workflows/deploy.yml
+├── seed/seed.json     # datos iniciales (del mock del front)
+├── main.go            # configuración, .env, router, CORS, logs, /health, archivos estáticos del front
+├── db.go              # Store: tabla documents (collection, id, data JSON)
+├── auth.go            # login, registro, JWT, middleware
+├── crud.go            # CRUD genérico + reglas por colección
+├── business.go        # endpoints de negocio
+├── seed.go            # carga del seed
+├── errors.go          # apiError -> { error }
+├── util.go            # helpers de JSON y fechas
 ├── tests/smoke.py
-├── build.ps1 / run.ps1
 └── CHANGELOG.md
 ```
