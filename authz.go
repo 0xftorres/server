@@ -140,6 +140,14 @@ func guardCreate(c Claims, col string, body M) error {
 			}
 			return forbidden("Solo podés pedir clases particulares para vos.")
 		}
+	case "recibos":
+		// Un socio registra desde el portal los recibos de sus propios pagos (inscripciones, cuotas, turnos).
+		if c.member() || c.professional() {
+			if c.isMe(s(body, "clientDni")) {
+				return nil
+			}
+			return forbidden("Solo podés registrar pagos a tu nombre.")
+		}
 	}
 	return errStaffOnly
 }
@@ -154,6 +162,18 @@ func guardUpdate(c Claims, col string, existing, body M) error {
 		if c.teaches(existing) {
 			body["coachId"] = c.CoachID
 			body["kind"] = kindFor(c.Role)
+			return nil
+		}
+	case "usuarios":
+		// Cualquier usuario edita su propio perfil, pero solo nombre, teléfono y foto.
+		if s(existing, "id") == c.Sub {
+			for k := range body {
+				switch k {
+				case "name", "nombre", "apellido", "phone", "photo":
+				default:
+					delete(body, k)
+				}
+			}
 			return nil
 		}
 	case "profesores":

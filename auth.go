@@ -161,6 +161,7 @@ func (a *app) authResponse(user M) (M, error) {
 		"dni":            s(user, "dni"),
 		"coachId":        s(user, "coachId"),
 		"memberNumber":   s(user, "memberNumber"),
+		"photo":          s(user, "photo"),
 		"expiraEn":       claims.Exp,
 	}, nil
 }
