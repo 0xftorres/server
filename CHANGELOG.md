@@ -9,11 +9,29 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
   tiene clases y un entrenador solo entrenamientos (`kind`), también cuando las carga el admin.
 - `GET /api/reservas/ocupacion`: turnos tomados, sin datos de quién reservó.
 - El token incluye `dni` y `coachId`; el login también devuelve `coachId`.
+- `GET` / `PUT /api/configuracion`: plazo de cancelación sin cargo, retención por cancelación
+  tardía y antelación máxima de reserva (RD02–RD05). Sin documento guardado rigen 6 hs / 50% / 30 días.
+- Alta y cambio de fecha de reservas: 400 si la fecha supera la antelación máxima (RD05).
+- `POST /api/documentos` y `GET /api/documentos/{id}`: archivos PDF, JPG o PNG de hasta 5 MB,
+  guardados en base64 en la misma base. Torneos y ligas guardan el reglamento adjunto en
+  `internalRulesDocument` (RF041, RF048) y las fichas de docentes el título en `licenseDetails.document`.
+- Clases, entrenamientos y turnos particulares: 400 si el docente no tiene el título habilitante
+  vigente, habilitado y con documento (RD09). Se valida al crear y al cambiar de docente.
 
 ### Cambiado
 - Permisos por rol en todas las rutas (`authz.go`). Antes cualquier usuario logueado podía
   modificar todo. Un socio ve solo sus reservas y recibos y solo se inscribe a sí mismo; un
   profesional ve y gestiona solo sus clases y su ficha.
+- `POST /api/reservas/{id}/cancelar` calcula las horas de antelación con la fecha y hora de inicio
+  de la reserva; `hoursInAdvance` del cuerpo se ignora. Antes el plazo (6 hs) y la retención (50%)
+  estaban fijos y las horas las informaba quien cancelaba.
+- Sin medio de pago informado, el pago de saldo queda en Mercado Pago (QR) y la factura en Tarjeta
+  de Débito (antes Efectivo, que no está entre los medios de RD11).
+- `tests/smoke.py` usa fechas relativas a hoy para las reservas.
+- Alta de docentes: exige título, institución, licencia, vencimiento y documento (RD08). Antes se
+  completaban con valores inventados y un nombre de PDF ficticio (`digitalDocumentUrl`, que se quita).
+- El seed trae un PDF de muestra por docente, en la colección `documentos`.
+- `PUT /reglamento` ya no borra el texto si el cuerpo no trae `internalRules`.
 
 ## [2.0.0] — 2026-10-23
 

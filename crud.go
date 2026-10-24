@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 )
 
 func validateCollection(col string) error {
@@ -122,6 +123,97 @@ func capTo30(x float64) float64 {
 		return 30
 	}
 	return math.Min(x, 30)
+}
+
+// normalizeLicense aplica RD08: el título habilitante, con su documento adjunto, es obligatorio y no
+// se completa con datos inventados.
+func (a *app) normalizeLicense(d M) error {
+	lic := asMap(d["licenseDetails"])
+	for _, field := range []struct{ key, label string }{
+		{"titleName", "la denominación del título"},
+		{"institution", "la institución emisora"},
+		{"licenseNumber", "el número de matrícula o licencia"},
+		{"expiryDate", "la fecha de vencimiento"},
+	} {
+		if strings.TrimSpace(s(lic, field.key)) == "" {
+			return badRequest(fmt.Sprintf("Falta %s del título habilitante (RD08).", field.label))
+		}
+	}
+	if _, err := time.Parse("2006-01-02", s(lic, "expiryDate")); err != nil {
+		return badRequest("La fecha de vencimiento del título no es válida (formato AAAA-MM-DD).")
+	}
+	if s(asMap(lic["document"]), "id") == "" {
+		return badRequest("Falta adjuntar el documento del título habilitante (RD08).")
+	}
+	doc, err := a.resolveDocument(lic["document"])
+	if err != nil {
+		return err
+	}
+	lic["document"] = doc
+	delete(lic, "digitalDocumentUrl")
+	defaultStr(lic, "status", "habilitado")
+	d["licenseDetails"] = lic
+	d["hasOfficialLicense"] = true
+	return nil
+}
+
+// checkCoachQualified aplica RD09: un docente sin título habilitante vigente no puede tener clases,
+// entrenamientos ni turnos particulares a cargo.
+func (a *app) checkCoachQualified(coachID string) error {
+	coach, ok, err := a.store.get("profesores", coachID)
+	if err != nil || !ok {
+		return err
+	}
+	lic := asMap(coach["licenseDetails"])
+	name := s(coach, "name")
+	switch {
+	case s(asMap(lic["document"]), "id") == "":
+		return badRequest(fmt.Sprintf("%s no tiene cargado el documento del título habilitante (RD08).", name))
+	case s(lic, "status") != "habilitado":
+		return badRequest(fmt.Sprintf("El título habilitante de %s no está habilitado (RD09).", name))
+	case s(lic, "expiryDate") < today():
+		return badRequest(fmt.Sprintf("El título habilitante de %s venció el %s (RD09).", name, s(lic, "expiryDate")))
+	}
+	return nil
+}
+
+// checkCoachChange revalida RD09 solo si cambia el docente, para que una clase ya asignada siga editable.
+func (a *app) checkCoachChange(existing, d M) error {
+	if s(d, "coachId") == s(existing, "coachId") {
+		return nil
+	}
+	return a.checkCoachQualified(s(d, "coachId"))
+}
+
+// checkClassCapacity aplica RD07 (tope de 30) y RD10 (cupo del tipo de cancha de la comisión).
+// courtAssigned trae la superficie entre paréntesis, p. ej. "Cancha 3 (Cemento)"; si no se
+// reconoce un tipo, queda solo el tope de 30. Sin cupo informado se usa el máximo permitido.
+func (a *app) checkClassCapacity(d M) error {
+	limit := 30.0
+	court := s(d, "courtAssigned")
+	if open, end := strings.LastIndex(court, "("), strings.LastIndex(court, ")"); open >= 0 && end > open {
+		surface := strings.TrimSpace(court[open+1 : end])
+		types, err := a.store.list("tipos-cancha")
+		if err != nil {
+			return err
+		}
+		for _, t := range types {
+			if strings.EqualFold(s(t, "name"), surface) {
+				limit = capTo30(f(t, "maxStudentsPerClass"))
+				break
+			}
+		}
+	}
+	capacity := f(d, "maxCapacity")
+	switch {
+	case capacity > 30:
+		return badRequest("El cupo reglamentario máximo es de hasta 30 alumnos.")
+	case capacity > limit:
+		return badRequest(fmt.Sprintf("El cupo máximo para %s es de %s alumnos (RD10).", court, numStr(limit)))
+	case capacity <= 0:
+		d["maxCapacity"] = limit
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -250,39 +342,33 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 		}
 		defaultVal(d, "active", true)
 	case "profesores":
-		defaultVal(d, "hasOfficialLicense", true)
-		lic := merge(M{
-			"titleName":     "Profesor de Tenis Certificado",
-			"institution":   "Asociación Argentina de Tenis (AAT)",
-			"licenseNumber": fmt.Sprintf("AAT-LIC-%d", 10000+rand4()*7%90000),
-			"issueDate":     today(),
-			"expiryDate":    "2029-12-31",
-			"status":        "habilitado",
-		}, asMap(d["licenseDetails"]))
-		if s(lic, "digitalDocumentUrl") == "" {
-			lic["digitalDocumentUrl"] = fmt.Sprintf("Certificado_%s.pdf", s(lic, "licenseNumber"))
+		if err := a.normalizeLicense(d); err != nil {
+			return nil, err
 		}
-		d["licenseDetails"] = lic
 		defaultStr(d, "type", "Profesor")
 		defaultStr(d, "photo", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80")
 	case "clases":
 		defaultStr(d, "kind", "clase")
 		defaultStr(d, "type", "grupal")
-		capacity := f(d, "maxCapacity")
-		if capacity > 30 {
-			return nil, badRequest("El cupo reglamentario máximo es de hasta 30 alumnos.")
+		if err := a.checkClassCapacity(d); err != nil {
+			return nil, err
 		}
-		d["maxCapacity"] = capTo30(capacity)
 		defaultVal(d, "currentEnrolled", 0)
 		defaultVal(d, "students", []any{})
 		defaultVal(d, "sessions", []any{"02/10", "04/10", "09/10", "11/10", "16/10", "18/10", "23/10", "25/10"})
 		if err := a.checkCoachKind(d); err != nil {
 			return nil, err
 		}
+		if err := a.checkCoachQualified(s(d, "coachId")); err != nil {
+			return nil, err
+		}
 	case "clases-particulares":
 		defaultStr(d, "kind", "clase")
 		defaultStr(d, "status", "programada")
 		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
+		}
+		if err := a.checkCoachQualified(s(d, "coachId")); err != nil {
 			return nil, err
 		}
 	case "recibos":
@@ -364,19 +450,29 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 		}
 		d["basePricePerHour"] = f(d, "basePricePerHour")
 		d["maxStudentsPerClass"] = capTo30(f(d, "maxStudentsPerClass"))
-	case "clases":
-		capacity := f(d, "maxCapacity")
-		if capacity > 30 {
-			return nil, badRequest("El cupo reglamentario máximo es de hasta 30 alumnos.")
+	case "profesores":
+		// Solo se revalida el título si viene en el cambio: editar horarios o datos de contacto no
+		// exige volver a presentarlo.
+		if _, has := patch["licenseDetails"]; has {
+			if err := a.normalizeLicense(d); err != nil {
+				return nil, err
+			}
 		}
-		if capacity <= 0 {
-			d["maxCapacity"] = 30
+	case "clases":
+		if err := a.checkClassCapacity(d); err != nil {
+			return nil, err
 		}
 		if err := a.checkCoachKind(d); err != nil {
 			return nil, err
 		}
+		if err := a.checkCoachChange(existing, d); err != nil {
+			return nil, err
+		}
 	case "clases-particulares":
 		if err := a.checkCoachKind(d); err != nil {
+			return nil, err
+		}
+		if err := a.checkCoachChange(existing, d); err != nil {
 			return nil, err
 		}
 	case "descuentos":

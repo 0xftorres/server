@@ -7,8 +7,10 @@ Recorre autenticación, CRUD genérico y los endpoints de negocio principales co
 corriendo, y falla (exit 1) si alguna respuesta no es la esperada. Solo usa la biblioteca
 estándar de Python.
 """
+import base64
 import json
 import sys
+from datetime import date, timedelta
 import urllib.error
 import urllib.request
 
@@ -35,6 +37,21 @@ def call(method, path, body=None, auth=True, expect=None):
     if expect is not None and status != expect:
         raise AssertionError(f"{method} {path} -> {status} (esperado {expect}): {payload[:300]}")
     return status, parsed
+
+
+def download(path):
+    req = urllib.request.Request(BASE + path)
+    if TOKEN:
+        req.add_header("Authorization", "Bearer " + TOKEN)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.headers.get("Content-Type"), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type"), e.read()
+
+
+def in_days(n):
+    return (date.today() + timedelta(days=n)).isoformat()
 
 
 def check(name, cond, detail=""):
@@ -104,7 +121,7 @@ def main():
 
     # Reservas: alta con recibo, modificar, pagar saldo, cancelar dentro y fuera de plazo
     booking = {"courtId": "cancha-2", "courtName": "Cancha 2 - Gabriela Sabatini (Ladrillo)", "surfaceType": "Ladrillo",
-               "date": "2026-11-10", "startTime": "10:00", "endTime": "12:00", "durationHours": 2, "playersType": "dobles",
+               "date": in_days(10), "startTime": "10:00", "endTime": "12:00", "durationHours": 2, "playersType": "dobles",
                "participants": [{"name": "Federico Gómez", "dni": "38.452.129", "isLead": True}],
                "courtCost": 9600, "equipmentCost": 0, "totalCost": 9600, "depositPaid": 4800, "remainingBalance": 4800,
                "depositPaymentMethod": "Tarjeta de Débito"}
@@ -115,18 +132,36 @@ def main():
     check("recibo persistido", rec["reservationId"] == rid)
     st, upd = call("PUT", f"/reservas/{rid}", {"durationHours": 3}, expect=200)
     check("modificar reserva recalcula fin, costo y saldo", upd["endTime"] == "13:00" and upd["courtCost"] == 14400 and upd["remainingBalance"] == 9600)
-    st, paid = call("POST", f"/reservas/{rid}/pagar-saldo", {"paymentMethod": "Efectivo"}, expect=200)
+    st, paid = call("POST", f"/reservas/{rid}/pagar-saldo", {"paymentMethod": "Tarjeta de Débito"}, expect=200)
     check("pagar saldo -> finalizada", paid["status"] == "finalizada" and paid["finalReceiptNumber"].startswith("REC-FINAL"))
     st, res2 = call("POST", "/reservas", booking, expect=201)
     rid2 = res2["data"]["id"]
-    st, canc = call("POST", f"/reservas/{rid2}/cancelar", {"hoursInAdvance": 10}, expect=200)
+    st, canc = call("POST", f"/reservas/{rid2}/cancelar", expect=200)
     check("cancelar >= 6hs -> reembolso total", canc["isWithinFreeWindow"] and canc["refund"]["refundType"] == "total" and canc["refund"]["refundAmount"] == 4800)
-    st, res3 = call("POST", "/reservas", booking, expect=201)
-    st, canc2 = call("POST", f"/reservas/{res3['data']['id']}/cancelar", {"hoursInAdvance": 2}, expect=200)
-    check("cancelar < 6hs -> cargo 50% + reembolso parcial", (not canc2["isWithinFreeWindow"]) and canc2["penaltyReceipt"]["totalPaid"] == 2400 and canc2["refund"]["refundAmount"] == 2400)
-    st, _ = call("POST", f"/reservas/{res3['data']['id']}/cancelar", {"hoursInAdvance": 2})
+    # Las horas de antelación las calcula la API: una reserva de ayer ya está fuera de plazo.
+    st, res3 = call("POST", "/reservas", dict(booking, date=in_days(-1)), expect=201)
+    st, canc2 = call("POST", f"/reservas/{res3['data']['id']}/cancelar", {"hoursInAdvance": 100}, expect=200)
+    check("cancelar < 6hs (ignora hoursInAdvance del cliente) -> cargo 50% + reembolso parcial", (not canc2["isWithinFreeWindow"]) and canc2["penaltyReceipt"]["totalPaid"] == 2400 and canc2["refund"]["refundAmount"] == 2400)
+    st, _ = call("POST", f"/reservas/{res3['data']['id']}/cancelar")
     check("cancelar dos veces -> 409", st == 409)
     st, _ = call("DELETE", f"/reservas/{res3['data']['id']}", expect=200)
+    st, _ = call("POST", "/reservas", dict(booking, date=in_days(31)))
+    check("reserva a más de 30 días -> 400 (RD05)", st == 400)
+    st, _ = call("PUT", f"/reservas/{rid}", {"date": in_days(31)})
+    check("mover reserva a más de 30 días -> 400 (RD05)", st == 400)
+
+    # Configuración del club (RD02-RD05)
+    st, cfg = call("GET", "/configuracion", expect=200)
+    check("configuración por defecto", cfg["freeCancellationHours"] == 6 and cfg["lateCancellationRetentionPercent"] == 50 and cfg["maxAdvanceBookingDays"] == 30)
+    st, _ = call("PUT", "/configuracion", {"lateCancellationRetentionPercent": 150})
+    check("retención fuera de 0-100 -> 400", st == 400)
+    st, cfg = call("PUT", "/configuracion", {"freeCancellationHours": 300, "lateCancellationRetentionPercent": 25, "maxAdvanceBookingDays": 60}, expect=200)
+    st, _ = call("POST", "/reservas", dict(booking, date=in_days(45)), expect=201)
+    check("con 60 días configurados se reserva a 45 días", st == 201)
+    st, res4 = call("POST", "/reservas", booking, expect=201)
+    st, canc3 = call("POST", f"/reservas/{res4['data']['id']}/cancelar", expect=200)
+    check("plazo y retención configurados (240 hs < 300 hs -> cargo 25%)", (not canc3["isWithinFreeWindow"]) and canc3["penaltyReceipt"]["totalPaid"] == 1200 and canc3["refund"]["refundAmount"] == 3600)
+    call("PUT", "/configuracion", {"freeCancellationHours": 6, "lateCancellationRetentionPercent": 50, "maxAdvanceBookingDays": 30}, expect=200)
 
     # Torneos: inscripción, enfrentamiento, reglamento
     st, enr = call("POST", "/torneos/trn-02/inscripciones", {"name": "Jugadora Test", "dni": "1", "partnerName": "Pareja"}, expect=201)
@@ -138,6 +173,23 @@ def main():
     check("enfrentamiento con el mismo jugador -> 400", st == 400)
     st, t = call("PUT", "/torneos/trn-02/reglamento", {"internalRules": "Reglas X"}, expect=200)
     check("reglamento de torneo", t["internalRules"] == "Reglas X")
+
+    # Documentos: subida, descarga y reglamento adjunto (RF041 / RF048)
+    pdf = b"%PDF-1.4\n% smoke\n%%EOF\n"
+    st, doc = call("POST", "/documentos", {"name": "Reglamento Smoke.pdf", "data": base64.b64encode(pdf).decode()}, expect=201)
+    check("subir PDF", doc["mimeType"] == "application/pdf" and doc["size"] == len(pdf) and "data" not in doc)
+    st, _ = call("POST", "/documentos", {"name": "nota.txt", "data": base64.b64encode(b"hola").decode()})
+    check("subir un .txt -> 400", st == 400)
+    st, _ = call("POST", "/documentos", {"name": "grande.pdf", "data": base64.b64encode(b"%PDF-" + b"0" * (5 << 20)).decode()})
+    check("subir más de 5 MB -> 400", st == 400)
+    st, ctype, raw = download(f"/documentos/{doc['id']}")
+    check("descargar PDF", st == 200 and ctype == "application/pdf" and raw == pdf)
+    st, t = call("PUT", "/torneos/trn-02/reglamento", {"internalRulesDocument": {"id": doc["id"]}}, expect=200)
+    check("adjuntar reglamento sin pisar el texto", t["internalRulesDocument"]["name"] == "Reglamento Smoke.pdf" and t["internalRules"] == "Reglas X")
+    st, _ = call("PUT", "/ligas/liga-01/reglamento", {"internalRulesDocument": {"id": "doc-inexistente"}})
+    check("reglamento con documento inexistente -> 400", st == 400)
+    st, t = call("PUT", "/torneos/trn-02/reglamento", {"internalRulesDocument": None}, expect=200)
+    check("quitar documento del reglamento", "internalRulesDocument" not in t)
     call("DELETE", f"/torneos/trn-02/inscripciones/{enr['participant']['id']}", expect=200)
 
     # Ligas: resultado actualiza tabla
@@ -169,6 +221,23 @@ def main():
     cls_now = next(c for c in att["classes"] if c["id"] == cid)
     check("marcar sesión completa", all(s["attendance"][0] == "J" for s in cls_now["students"]))
     call("DELETE", f"/clases/{cid}", expect=200)
+
+    # Título habilitante obligatorio (RD08 / RD09)
+    lic = {"titleName": "Profesor Smoke", "institution": "AAT", "licenseNumber": "AAT-1", "expiryDate": in_days(365)}
+    st, _ = call("POST", "/profesores", {"name": "Prof. Sin Título", "type": "Profesor"})
+    check("docente sin título -> 400 (RD08)", st == 400)
+    st, _ = call("POST", "/profesores", {"name": "Prof. Sin Documento", "type": "Profesor", "licenseDetails": lic})
+    check("docente sin documento del título -> 400 (RD08)", st == 400)
+    st, prof = call("POST", "/profesores", {"name": "Prof. Smoke", "type": "Profesor", "licenseDetails": dict(lic, document={"id": doc["id"]})}, expect=201)
+    check("docente con título y documento", prof["licenseDetails"]["document"]["id"] == doc["id"] and prof["licenseDetails"]["status"] == "habilitado")
+    st, _ = call("PUT", f"/profesores/{prof['id']}/certificacion", {"expiryDate": in_days(-1)}, expect=200)
+    st, _ = call("POST", "/clases", {"name": "Clase Vencida", "kind": "clase", "coachId": prof["id"], "maxCapacity": 5})
+    check("clase con título vencido -> 400 (RD09)", st == 400)
+    st, _ = call("POST", "/clases-particulares", {"coachId": prof["id"], "kind": "clase", "studentName": "X", "studentDni": "1", "date": in_days(3), "time": "10:00"})
+    check("turno particular con título vencido -> 400 (RD09)", st == 400)
+    st, _ = call("PUT", f"/profesores/{prof['id']}", {"specialty": "Revés"}, expect=200)
+    check("editar datos sin tocar el título no lo revalida", st == 200)
+    call("DELETE", f"/profesores/{prof['id']}", expect=200)
 
     # Caja: factura, reembolso, descuentos, usuario
     st, inv = call("POST", "/facturas", {"clientName": "Cliente", "clientDni": "1", "concept": "Alquiler", "items": [{"description": "1h", "quantity": 1, "unitPrice": 5000}], "paymentMethod": "Tarjeta de Débito"}, expect=201)
@@ -228,10 +297,18 @@ def main():
     st, _ = call("POST", "/reservas", dict(booking, participants=[{"name": "Otro", "dni": "1"}]))
     check("socio no reserva a nombre de otro -> 403", st == 403)
     st, own = call("POST", "/reservas", own_booking, expect=201)
-    st, _ = call("POST", "/reservas/RES-2026-002/cancelar", {"hoursInAdvance": 10})
+    st, _ = call("POST", "/reservas/RES-2026-002/cancelar")
     check("socio no cancela reservas ajenas -> 403", st == 403)
-    st, _ = call("POST", f"/reservas/{own['data']['id']}/cancelar", {"hoursInAdvance": 10})
+    st, _ = call("POST", f"/reservas/{own['data']['id']}/cancelar")
     check("socio cancela su reserva", st == 200)
+    st, _ = call("GET", "/configuracion")
+    check("socio consulta la configuración", st == 200)
+    st, _ = call("PUT", "/configuracion", {"maxAdvanceBookingDays": 365})
+    check("socio no modifica la configuración -> 403", st == 403)
+    st, _ = call("POST", "/documentos", {"name": "x.pdf", "data": base64.b64encode(b"%PDF-1.4").decode()})
+    check("socio no sube documentos -> 403", st == 403)
+    st, ctype, raw = download("/documentos/doc-seed-coach-01")
+    check("socio descarga documentos", st == 200 and raw.startswith(b"%PDF-"))
     st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Otro", "dni": "1"})
     check("socio no inscribe a otro -> 403", st == 403)
     st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Federico Gómez", "dni": socio_dni})

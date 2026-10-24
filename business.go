@@ -5,13 +5,16 @@ package main
 // exactamente las mismas formas de respuesta.
 
 import (
+	"encoding/base64"
 	"fmt"
 	"math"
+	"mime"
 	"net/http"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ===========================================================================
@@ -26,6 +29,48 @@ func defaultAvailability() M {
 		"blockedRanges": []any{},
 		"notes":         "",
 	}
+}
+
+// Índice = time.Weekday.
+var weekDays = []string{"Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"}
+
+func hhmmToMinutes(v string) int {
+	hh, mm, _ := strings.Cut(strings.TrimSpace(v), ":")
+	h, _ := strconv.Atoi(hh)
+	m, _ := strconv.Atoi(mm)
+	return h*60 + m
+}
+
+// slotBlock devuelve por qué la cancha no admite el turno según su disponibilidad (RD06: días de
+// atención, horario y bloqueos programados), o "" si está libre. Mismo criterio que getSlotBlock
+// del front. El estado "mantenimiento" se valida aparte.
+func slotBlock(court M, date, startTime string, durationHours float64) string {
+	av := merge(defaultAvailability(), asMap(court["availability"]))
+	day := ""
+	if t, err := time.Parse("2006-01-02", date); err == nil {
+		day = weekDays[t.Weekday()]
+		if !slices.Contains(arr(av, "days"), any(day)) {
+			return "sin atención el día " + day
+		}
+	}
+	if startTime == "" {
+		return ""
+	}
+	if durationHours <= 0 {
+		durationHours = 1
+	}
+	from := hhmmToMinutes(startTime)
+	to := from + int(math.Round(durationHours*60))
+	if from < hhmmToMinutes(s(av, "openTime")) || to > hhmmToMinutes(s(av, "closeTime")) {
+		return fmt.Sprintf("fuera de horario (%s a %s)", s(av, "openTime"), s(av, "closeTime"))
+	}
+	for _, raw := range arr(av, "blockedRanges") {
+		bl := asMap(raw)
+		if s(bl, "day") == day && from < hhmmToMinutes(s(bl, "to")) && to > hhmmToMinutes(s(bl, "from")) {
+			return orDefault(s(bl, "reason"), fmt.Sprintf("bloqueada de %s a %s", s(bl, "from"), s(bl, "to")))
+		}
+	}
+	return ""
 }
 
 // PATCH /api/canchas/{id}/estado  { status, maintenanceNotes }
@@ -99,6 +144,110 @@ func (a *app) stockAdjust(r *http.Request) (int, any, error) {
 }
 
 // ===========================================================================
+// Configuración del club (RD02-RD05)
+// ===========================================================================
+
+// La configuración es un único documento que no pasa por el CRUD genérico: si nunca se guardó
+// (o se reseteó la base) rigen estos valores.
+const configCollection, configID = "configuracion", "club"
+
+func defaultClubConfig() M {
+	return M{
+		"freeCancellationHours":            6.0,
+		"lateCancellationRetentionPercent": 50.0,
+		"maxAdvanceBookingDays":            30.0,
+	}
+}
+
+func (a *app) clubConfig() (M, error) {
+	cfg := defaultClubConfig()
+	doc, ok, err := a.store.get(configCollection, configID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		for k := range cfg {
+			if _, has := doc[k]; has {
+				cfg[k] = f(doc, k)
+			}
+		}
+	}
+	cfg["id"] = configID
+	return cfg, nil
+}
+
+// GET /api/configuracion
+func (a *app) getClubConfig(r *http.Request) (int, any, error) {
+	cfg, err := a.clubConfig()
+	if err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, cfg, nil
+}
+
+// PUT /api/configuracion  { freeCancellationHours?, lateCancellationRetentionPercent?, maxAdvanceBookingDays? }
+func (a *app) updateClubConfig(r *http.Request) (int, any, error) {
+	body, err := readJSON(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	cfg, err := a.clubConfig()
+	if err != nil {
+		return 0, nil, err
+	}
+	for k := range defaultClubConfig() {
+		if _, has := body[k]; has {
+			cfg[k] = f(body, k)
+		}
+	}
+	retention := f(cfg, "lateCancellationRetentionPercent")
+	days := f(cfg, "maxAdvanceBookingDays")
+	switch {
+	case f(cfg, "freeCancellationHours") <= 0:
+		return 0, nil, badRequest("El plazo de cancelación sin cargo debe ser mayor a 0 horas.")
+	case retention < 0 || retention > 100:
+		return 0, nil, badRequest("La retención por cancelación tardía debe estar entre 0% y 100%.")
+	case days < 1 || days != math.Trunc(days):
+		return 0, nil, badRequest("La antelación máxima de reserva debe ser un número entero de días, mínimo 1.")
+	}
+	if err := a.store.upsert(configCollection, cfg); err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, cfg, nil
+}
+
+// checkBookingWindow aplica RD05: no se reserva más allá de la antelación máxima del club.
+func (a *app) checkBookingWindow(date string) error {
+	if date == "" {
+		return nil
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	if err != nil {
+		return badRequest("La fecha de la reserva no es válida (formato AAAA-MM-DD).")
+	}
+	cfg, err := a.clubConfig()
+	if err != nil {
+		return err
+	}
+	maxDays := int(f(cfg, "maxAdvanceBookingDays"))
+	now := time.Now()
+	limit := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local).AddDate(0, 0, maxDays)
+	if day.After(limit) {
+		return badRequest(fmt.Sprintf("Las reservas se pueden hacer con hasta %d días de antelación (hasta el %s) (RD05).", maxDays, limit.Format("2006-01-02")))
+	}
+	return nil
+}
+
+// hoursUntilStart devuelve cuántas horas faltan para el inicio de la reserva (negativo si ya empezó).
+func hoursUntilStart(res M) (float64, error) {
+	start, err := time.ParseInLocation("2006-01-02 15:04", s(res, "date")+" "+orDefault(s(res, "startTime"), "00:00"), time.Local)
+	if err != nil {
+		return 0, badRequest("La reserva no tiene una fecha y hora de inicio válidas.")
+	}
+	return math.Round(time.Until(start).Hours()*10) / 10, nil
+}
+
+// ===========================================================================
 // Reservas
 // ===========================================================================
 
@@ -113,6 +262,9 @@ func client(res M) (string, string) {
 
 // createReservationInner da de alta una reserva con recibo de seña (RD01: se confirma con el 50% abonado).
 func (a *app) createReservationInner(body M) (M, error) {
+	if err := a.checkBookingWindow(s(body, "date")); err != nil {
+		return nil, err
+	}
 	if courtID := s(body, "courtId"); courtID != "" {
 		court, ok, err := a.store.get("canchas", courtID)
 		if err != nil {
@@ -120,6 +272,11 @@ func (a *app) createReservationInner(body M) (M, error) {
 		}
 		if ok && s(court, "status") == "mantenimiento" {
 			return nil, conflict("La cancha está bloqueada por mantenimiento y no admite reservas (RD06).")
+		}
+		if ok {
+			if reason := slotBlock(court, s(body, "date"), s(body, "startTime"), f(body, "durationHours")); reason != "" {
+				return nil, conflict(fmt.Sprintf("La cancha no admite reservas en ese turno: %s (RD06).", reason))
+			}
 		}
 	}
 	count, err := a.store.count("reservas")
@@ -231,6 +388,13 @@ func (a *app) recalculateReservation(existing, patch M) (M, error) {
 	_, startChanged := patch["startTime"]
 	_, durationChanged := patch["durationHours"]
 	_, courtChanged := patch["courtId"]
+	_, dateChanged := patch["date"]
+	// Solo se valida una fecha nueva: si el club achica la antelación, las reservas ya tomadas siguen editables.
+	if dateChanged && s(patch, "date") != s(existing, "date") {
+		if err := a.checkBookingWindow(s(next, "date")); err != nil {
+			return nil, err
+		}
+	}
 
 	if startChanged || durationChanged {
 		hh, mm, _ := strings.Cut(s(next, "startTime"), ":")
@@ -253,6 +417,11 @@ func (a *app) recalculateReservation(existing, patch M) (M, error) {
 	if ok {
 		if courtChanged && s(court, "status") == "mantenimiento" {
 			return nil, conflict("La cancha seleccionada está bloqueada por mantenimiento (RD06).")
+		}
+		if courtChanged || dateChanged || startChanged || durationChanged {
+			if reason := slotBlock(court, s(next, "date"), s(next, "startTime"), dur); reason != "" {
+				return nil, conflict(fmt.Sprintf("La cancha no admite reservas en ese turno: %s (RD06).", reason))
+			}
 		}
 		if courtChanged || durationChanged {
 			if courtChanged {
@@ -304,7 +473,7 @@ func (a *app) payRemaining(r *http.Request) (int, any, error) {
 		"concept":       "Liquidación Final 50% Saldo - " + s(res, "courtName"),
 		"items":         []any{M{"description": "Saldo restante 50% de turno finalizado", "amount": f(res, "remainingBalance")}},
 		"totalPaid":     f(res, "remainingBalance"),
-		"paymentMethod": orDefault(s(body, "paymentMethod"), "Efectivo"),
+		"paymentMethod": orDefault(s(body, "paymentMethod"), "Mercado Pago (QR)"),
 		"status":        "completado",
 		"date":          nowStamp(),
 		"qrData":        "https://mpago.la/pos/tenisahora/" + strings.ToLower(finalID),
@@ -316,14 +485,11 @@ func (a *app) payRemaining(r *http.Request) (int, any, error) {
 	return http.StatusOK, res, nil
 }
 
-// POST /api/reservas/{id}/cancelar  { hoursInAdvance }
-// RD02-RD04: con 6 hs o más de antelación corresponde reembolso total; con menos, se retiene
-// el 50% de la seña como cargo y se reintegra el resto.
+// POST /api/reservas/{id}/cancelar
+// RD02-RD04: con la antelación mínima del club (o más) corresponde reembolso total; con menos, se
+// retiene el porcentaje configurado de la seña como cargo y se reintegra el resto. Las horas se
+// calculan contra el inicio de la reserva, no las informa quien cancela.
 func (a *app) cancelReservation(r *http.Request) (int, any, error) {
-	body, err := readJSON(r)
-	if err != nil {
-		return 0, nil, err
-	}
 	id := r.PathValue("id")
 	res, err := a.store.require("reservas", id)
 	if err != nil {
@@ -332,11 +498,20 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 	if s(res, "status") == "cancelada" {
 		return 0, nil, conflict("La reserva ya está cancelada.")
 	}
-	hours := f(body, "hoursInAdvance")
-	within := hours >= 6
-	policy := "Cancelación tardía (<6hs): Se aplica retención del 50% de seña por costo operativo."
+	hours, err := hoursUntilStart(res)
+	if err != nil {
+		return 0, nil, err
+	}
+	cfg, err := a.clubConfig()
+	if err != nil {
+		return 0, nil, err
+	}
+	freeHours := f(cfg, "freeCancellationHours")
+	retentionPct := f(cfg, "lateCancellationRetentionPercent")
+	within := hours >= freeHours
+	policy := fmt.Sprintf("Cancelación tardía (<%shs): Se aplica retención del %s%% de seña por costo operativo.", numStr(freeHours), numStr(retentionPct))
 	if within {
-		policy = "Cancelación anticipada (>6hs): Reembolso de seña según política."
+		policy = fmt.Sprintf("Cancelación anticipada (>=%shs): Reembolso de seña según política.", numStr(freeHours))
 	}
 	res["status"] = "cancelada"
 	res["cancellationDetails"] = M{
@@ -373,7 +548,7 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 		refund["refundAmount"] = deposit
 		refund["refundMethod"] = "Devolución a " + orDefault(s(res, "depositPaymentMethod"), "medio de pago original")
 	} else {
-		retained := math.Round(deposit * 0.5)
+		retained := math.Round(deposit * retentionPct / 100)
 		receipt := M{
 			"id":            fmt.Sprintf("REC-CARGO-%d", rand4()),
 			"reservationId": id,
@@ -382,7 +557,7 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 			"concept":       "Cargo por cancelación fuera de plazo - " + s(res, "courtName"),
 			"items": []any{
 				M{"description": fmt.Sprintf("Seña abonada (%s)", id), "amount": deposit},
-				M{"description": "Retención 50% por cancelación con menos de 6 hs", "amount": retained},
+				M{"description": fmt.Sprintf("Retención %s%% por cancelación con menos de %s hs", numStr(retentionPct), numStr(freeHours)), "amount": retained},
 				M{"description": "Saldo reintegrado como crédito en cuenta", "amount": deposit - retained},
 			},
 			"totalPaid":     retained,
@@ -395,7 +570,7 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 			return 0, nil, err
 		}
 		penalty = receipt
-		refund["reason"] = fmt.Sprintf("Cancelación fuera de plazo (%s hs). Se retiene el 50%% de la seña y se reintegra el resto.", numStr(hours))
+		refund["reason"] = fmt.Sprintf("Cancelación fuera de plazo (%s hs). Se retiene el %s%% de la seña y se reintegra el resto.", numStr(hours), numStr(retentionPct))
 		refund["refundType"] = "parcial"
 		refund["refundAmount"] = deposit - retained
 		refund["refundMethod"] = "Crédito en cuenta de socio"
@@ -404,6 +579,108 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	return http.StatusOK, M{"data": res, "isWithinFreeWindow": within, "refund": refund, "penaltyReceipt": penalty}, nil
+}
+
+// ===========================================================================
+// Documentos (reglamentos internos y títulos habilitantes)
+// ===========================================================================
+
+// Los archivos se guardan en base64 dentro de la misma base: es lo único que hay que respaldar.
+const documentsCollection = "documentos"
+
+const maxDocumentBytes = 5 << 20
+
+var documentTypes = []string{"application/pdf", "image/jpeg", "image/png"}
+
+// documentRef es lo que guardan torneos, ligas y fichas de docentes: sin el contenido.
+func documentRef(doc M) M {
+	return M{"id": s(doc, "id"), "name": s(doc, "name"), "mimeType": s(doc, "mimeType"), "size": f(doc, "size")}
+}
+
+// resolveDocument valida que ref apunte a un documento cargado y devuelve la referencia normalizada.
+func (a *app) resolveDocument(ref any) (M, error) {
+	id := s(asMap(ref), "id")
+	if id == "" {
+		return nil, badRequest("Falta el documento adjunto.")
+	}
+	doc, ok, err := a.store.get(documentsCollection, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, badRequest(fmt.Sprintf("El documento %s no existe.", id))
+	}
+	return documentRef(doc), nil
+}
+
+// POST /api/documentos  { name, data (base64) }
+func (a *app) uploadDocument(r *http.Request) (int, any, error) {
+	// El base64 ocupa 4/3 del archivo; el margen cubre el resto del JSON.
+	r.Body = http.MaxBytesReader(nil, r.Body, maxDocumentBytes*4/3+64<<10)
+	body, err := readObject(r)
+	if err != nil {
+		// decodeBody convierte el error en texto, así que se reconoce por el mensaje de MaxBytesReader.
+		if strings.Contains(err.Error(), "request body too large") {
+			return 0, nil, badRequest("El archivo supera el máximo de 5 MB.")
+		}
+		return 0, nil, err
+	}
+	name := strings.TrimSpace(s(body, "name"))
+	if name == "" {
+		return 0, nil, badRequest("El nombre del archivo es obligatorio.")
+	}
+	raw, err := base64.StdEncoding.DecodeString(s(body, "data"))
+	if err != nil || len(raw) == 0 {
+		return 0, nil, badRequest("El contenido del archivo no es base64 válido.")
+	}
+	if len(raw) > maxDocumentBytes {
+		return 0, nil, badRequest("El archivo supera el máximo de 5 MB.")
+	}
+	// El tipo sale del contenido, no de lo que declara el cliente.
+	mimeType := http.DetectContentType(raw)
+	if !slices.Contains(documentTypes, mimeType) {
+		return 0, nil, badRequest("Solo se aceptan archivos PDF, JPG o PNG.")
+	}
+	doc := M{
+		"id":         fmt.Sprintf("doc-%d", nowMillis()),
+		"name":       name,
+		"mimeType":   mimeType,
+		"size":       float64(len(raw)),
+		"data":       s(body, "data"),
+		"uploadedAt": nowISO(),
+	}
+	for n := 2; ; n++ {
+		taken, err := a.store.exists(documentsCollection, s(doc, "id"))
+		if err != nil {
+			return 0, nil, err
+		}
+		if !taken {
+			break
+		}
+		doc["id"] = fmt.Sprintf("doc-%d-%d", nowMillis(), n)
+	}
+	if err := a.store.insert(documentsCollection, doc); err != nil {
+		return 0, nil, err
+	}
+	return http.StatusCreated, documentRef(doc), nil
+}
+
+// GET /api/documentos/{id} — devuelve el archivo tal cual (no JSON).
+func (a *app) downloadDocument(w http.ResponseWriter, r *http.Request) {
+	doc, err := a.store.require(documentsCollection, r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(s(doc, "data"))
+	if err != nil {
+		writeError(w, internalError("El documento guardado está dañado."))
+		return
+	}
+	w.Header().Set("Content-Type", s(doc, "mimeType"))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("inline", map[string]string{"filename": s(doc, "name")}))
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	w.Write(raw)
 }
 
 // ===========================================================================
@@ -430,7 +707,21 @@ func (a *app) setRules(r *http.Request, col string) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	doc["internalRules"] = s(body, "internalRules")
+	if _, has := body["internalRules"]; has {
+		doc["internalRules"] = s(body, "internalRules")
+	}
+	// RF041 / RF048: documento del reglamento; null lo quita.
+	if ref, has := body["internalRulesDocument"]; has {
+		if ref == nil {
+			delete(doc, "internalRulesDocument")
+		} else {
+			resolved, err := a.resolveDocument(ref)
+			if err != nil {
+				return 0, nil, err
+			}
+			doc["internalRulesDocument"] = resolved
+		}
+	}
 	if err := a.store.upsert(col, doc); err != nil {
 		return 0, nil, err
 	}
@@ -787,7 +1078,7 @@ func (a *app) coachAvailability(r *http.Request) (int, any, error) {
 	return http.StatusOK, c, nil
 }
 
-// PUT /api/profesores/{id}/certificacion  { titleName, institution, licenseNumber, issueDate, expiryDate, status, digitalDocumentUrl }
+// PUT /api/profesores/{id}/certificacion  { titleName, institution, licenseNumber, issueDate, expiryDate, status, document }
 func (a *app) coachLicense(r *http.Request) (int, any, error) {
 	body, err := readObject(r)
 	if err != nil {
@@ -798,6 +1089,9 @@ func (a *app) coachLicense(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	c["licenseDetails"] = merge(asMap(c["licenseDetails"]), body)
+	if err := a.normalizeLicense(c); err != nil {
+		return 0, nil, err
+	}
 	if err := a.store.upsert("profesores", c); err != nil {
 		return 0, nil, err
 	}
@@ -1004,7 +1298,7 @@ func computeInvoice(d M) (M, error) {
 	tax := math.Round(subtotal * taxRate / 100)
 	defaultStr(d, "type", "B")
 	defaultStr(d, "concept", s(items[0].(M), "description"))
-	defaultStr(d, "paymentMethod", "Efectivo")
+	defaultStr(d, "paymentMethod", "Tarjeta de Débito")
 	defaultStr(d, "issuedBy", "Administración General")
 	if s(d, "relatedReceiptId") == "" {
 		d["relatedReceiptId"] = nil

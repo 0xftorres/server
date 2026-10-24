@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 )
 
 // collections son las colecciones conocidas (también se usan para validar las rutas genéricas).
@@ -46,10 +47,11 @@ func loadSeedFile(path string) (M, error) {
 }
 
 // applySeed inserta el seed completo. Devuelve la cantidad de documentos cargados.
+// `documentos` no está en collections porque no tiene CRUD genérico, pero viene en el seed.
 func applySeed(st *Store, seed M) (int, error) {
 	passwordHash := hashPassword(defaultPassword)
 	total := 0
-	for _, col := range collections {
+	for _, col := range append(slices.Clone(collections), documentsCollection) {
 		for _, item := range arr(seed, col) {
 			doc, ok := item.(M)
 			if !ok {

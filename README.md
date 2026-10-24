@@ -131,21 +131,25 @@ alerta), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúscul
 | Método | Ruta | Cuerpo | Respuesta |
 |---|---|---|---|
 | GET | `/auth/yo` | — | claims del token |
+| POST | `/documentos` | `{ name, data }` (base64) | `{ id, name, mimeType, size }` (solo Empleado; PDF, JPG o PNG según el contenido, máx. 5 MB) |
+| GET | `/documentos/{id}` | — | el archivo (no JSON), con su `Content-Type` |
+| GET | `/configuracion` | — | `{ id, freeCancellationHours, lateCancellationRetentionPercent, maxAdvanceBookingDays }` (defaults 6 / 50 / 30 si nunca se guardó) |
+| PUT | `/configuracion` | campos a modificar | configuración (solo Empleado; 400 si horas ≤ 0, retención fuera de 0–100 o días < 1) |
 | POST | `/admin/reset` | — | `{ success, documents }` (solo rol Empleado, 403 si no) |
 | PATCH | `/canchas/{id}/estado` | `{ status, maintenanceNotes }` | cancha |
 | PUT | `/canchas/{id}/disponibilidad` | `{ days, openTime, closeTime, slotMinutes, blockedRanges, notes }` | cancha |
 | PATCH | `/stock/{id}/ajuste` | `{ totalStock }` | ítem |
-| POST | `/reservas` | datos de la reserva | `{ data, receipt }` (recibo de seña 50%, RD01) — 409 si la cancha está en mantenimiento (RD06) |
+| POST | `/reservas` | datos de la reserva | `{ data, receipt }` (recibo de seña 50%, RD01) — 409 si la cancha está en mantenimiento (RD06), 400 si la fecha supera la antelación máxima (RD05) |
 | POST | `/reservas/{id}/pagar-saldo` | `{ paymentMethod }` | reserva finalizada + recibo final |
-| POST | `/reservas/{id}/cancelar` | `{ hoursInAdvance }` | `{ data, isWithinFreeWindow, refund, penaltyReceipt }` (RD02–RD04) |
-| PUT | `/torneos/{id}/reglamento` · `/ligas/{id}/reglamento` | `{ internalRules }` | competencia |
+| POST | `/reservas/{id}/cancelar` | — | `{ data, isWithinFreeWindow, refund, penaltyReceipt }` (RD02–RD04; las horas se calculan con el inicio de la reserva y el plazo y la retención salen de `/configuracion`) |
+| PUT | `/torneos/{id}/reglamento` · `/ligas/{id}/reglamento` | `{ internalRules?, internalRulesDocument? }` (`{ id }` de un documento; `null` lo quita) | competencia |
 | POST | `/torneos/{id}/inscripciones` · `/ligas/{id}/inscripciones` | `{ name, dni, phone, partnerName, partnerDni }` | `{ success, participant }` (409 si no hay cupo) |
 | DELETE | `/torneos/{id}/inscripciones/{pid}` · `/ligas/{id}/inscripciones/{pid}` | — | `{ success }` |
 | POST | `/torneos/{id}/enfrentamientos` · `/ligas/{id}/enfrentamientos` | `{ round, p1, p2, court, date }` | `{ success, match }` |
 | PUT | `/torneos/{id}/enfrentamientos/{mid}` · `/ligas/{id}/enfrentamientos/{mid}` | campos a modificar | `{ success, match }` |
 | POST | `/ligas/{id}/enfrentamientos/{mid}/resultado` | `{ score, winner }` | `{ success, match, standings }` (3 pts por victoria, no duplica si ya estaba finalizado) |
 | PUT | `/profesores/{id}/disponibilidad` | `{ availableHours }` | docente |
-| PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` | docente |
+| PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` (`document: { id }` para el título) | docente (400 si el título queda incompleto, RD08) |
 | POST | `/clases/{id}/alumnos` | `{ name, dni, phone }` | `{ success, student }` (409 si el cupo está completo, RD10) |
 | DELETE | `/clases/{id}/alumnos/{sid}` | — | `{ success }` |
 | POST | `/clases/{id}/asistencia/alternar` | `{ studentId, sessionIndex }` | `{ success, classes }` (P → A → J → P) |
@@ -165,7 +169,7 @@ python tests\smoke.py http://otra-ip:5090/api
 ```
 
 El script recorre autenticación, CRUD, reglas de dominio y los endpoints de negocio
-(46 verificaciones) y deja la base reseteada al terminar.
+(97 verificaciones) y deja la base reseteada al terminar.
 
 ## Estructura
 

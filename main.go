@@ -201,6 +201,12 @@ func (a *app) routes(frontendDist string) http.Handler {
 	protected("PATCH /api/canchas/{id}/estado", guard(staffOnly, a.courtStatus))
 	protected("PUT /api/canchas/{id}/disponibilidad", guard(staffOnly, a.courtAvailability))
 	protected("PATCH /api/stock/{id}/ajuste", guard(staffOnly, a.stockAdjust))
+	// Documentos: los sube el personal; los descarga cualquier usuario logueado (reglamentos, títulos).
+	protected("POST /api/documentos", guard(staffOnly, a.uploadDocument))
+	mux.HandleFunc("GET /api/documentos/{id}", a.requireAuth(a.downloadDocument))
+	// Configuración del club: la lee cualquier usuario logueado (plazos de reserva y cancelación).
+	protected("GET /api/configuracion", a.getClubConfig)
+	protected("PUT /api/configuracion", guard(staffOnly, a.updateClubConfig))
 	// Reservas (alta propia: genera recibo de seña)
 	protected("GET /api/reservas", guard(membersAndStaff, a.listReservations))
 	protected("GET /api/reservas/ocupacion", guard(membersAndStaff, a.reservationsOccupancy))
