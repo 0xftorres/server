@@ -165,13 +165,14 @@ func guardUpdate(c Claims, col string, existing, body M) error {
 			return nil
 		}
 	case "usuarios":
-		// Cualquier usuario edita su propio perfil, pero solo nombre, teléfono y foto.
+		// Cualquier usuario edita su propio perfil, pero solo nombre, teléfono y foto. El rol, el
+		// email, el DNI o los descuentos los cambia el personal: intentarlo es 403, no se ignora.
 		if s(existing, "id") == c.Sub {
 			for k := range body {
 				switch k {
 				case "name", "nombre", "apellido", "phone", "photo":
 				default:
-					delete(body, k)
+					return forbidden(fmt.Sprintf("No podés modificar el campo %q de tu usuario; solo nombre, teléfono y foto.", k))
 				}
 			}
 			return nil

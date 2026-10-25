@@ -123,8 +123,8 @@ Colecciones: `usuarios`, `canchas`, `tipos-cancha`, `stock`, `reservas`, `torneo
 
 Reglas de alta/modificación destacadas: `usuarios` (email único, `password` → `passwordHash`,
 hash nunca se devuelve), `tipos-cancha` (nombre único, cupo ≤ 30), `stock` (recalcula disponible y
-alerta), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúsculas), `facturas`
-(calcula neto, IVA y total), `reembolsos` (total/parcial), `reservas` (PUT recalcula fin, costo y saldo).
+estado `disponible` / `agotado`), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúsculas),
+`facturas` (calcula el total de los ítems), `reembolsos` (total/parcial), `reservas` (PUT recalcula fin, costo y saldo).
 
 ### Negocio
 
@@ -133,8 +133,7 @@ alerta), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúscul
 | GET | `/auth/yo` | — | claims del token |
 | POST | `/documentos` | `{ name, data }` (base64) | `{ id, name, mimeType, size }` (solo Empleado; PDF, JPG o PNG según el contenido, máx. 5 MB) |
 | GET | `/documentos/{id}` | — | el archivo (no JSON), con su `Content-Type` |
-| GET | `/configuracion` | — | `{ id, freeCancellationHours, lateCancellationRetentionPercent, maxAdvanceBookingDays }` (defaults 6 / 50 / 30 si nunca se guardó) |
-| PUT | `/configuracion` | campos a modificar | configuración (solo Empleado; 400 si horas ≤ 0, retención fuera de 0–100 o días < 1) |
+| GET | `/configuracion` | — | `{ id, freeCancellationHours, lateCancellationRetentionPercent, maxAdvanceBookingDays, privateLessonHourlyRate }` (valores fijados por el club: 6 hs / 50 % / 30 días / $6000) |
 | POST | `/admin/reset` | — | `{ success, documents }` (solo rol Empleado, 403 si no) |
 | PATCH | `/canchas/{id}/estado` | `{ status, maintenanceNotes }` | cancha |
 | PUT | `/canchas/{id}/disponibilidad` | `{ days, openTime, closeTime, slotMinutes, blockedRanges, notes }` | cancha |
@@ -152,12 +151,10 @@ alerta), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúscul
 | PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` (`document: { id }` para el título) | docente (400 si el título queda incompleto, RD08) |
 | POST | `/clases/{id}/alumnos` | `{ name, dni, phone }` | `{ success, student }` (409 si el cupo está completo, RD10) |
 | DELETE | `/clases/{id}/alumnos/{sid}` | — | `{ success }` |
-| POST | `/clases/{id}/asistencia/alternar` | `{ studentId, sessionIndex }` | `{ success, classes }` (P → A → J → P) |
-| POST | `/clases/{id}/asistencia/sesion` | `{ sessionIndex, status }` | `{ success, classes }` |
-| POST | `/clases/{id}/asistencia/registrar` | `{ studentId, status }` | `{ success }` |
+| POST | `/clases/{id}/asistencia/alternar` | `{ studentId, sessionIndex }` | `{ success, classes }` (P → A → P) |
+| POST | `/clases/{id}/asistencia/sesion` | `{ sessionIndex, status }` | `{ success, classes }` (`status` P o A) |
+| POST | `/clases/{id}/asistencia/registrar` | `{ studentId, status }` | `{ success }` (`status` P o A) |
 | POST | `/clases-particulares/{id}/cancelar` | — | `{ success, data }` |
-| POST | `/facturas/{id}/anular` | — | factura |
-| PATCH | `/reembolsos/{id}/estado` | `{ status }` (`pendiente` / `procesado` / `rechazado`) | reembolso |
 | PUT | `/usuarios/{id}/descuentos` | `{ activeDiscounts: [códigos] }` | usuario |
 
 ## Pruebas

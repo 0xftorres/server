@@ -136,7 +136,7 @@ func (a *app) stockAdjust(r *http.Request) (int, any, error) {
 	available := math.Max(total-f(item, "inUseStock"), 0)
 	item["totalStock"] = total
 	item["availableStock"] = available
-	item["status"] = stockStatus(available, f(item, "minAlertThreshold"))
+	item["status"] = stockStatus(available)
 	if err := a.store.upsert("stock", item); err != nil {
 		return 0, nil, err
 	}
@@ -147,31 +147,21 @@ func (a *app) stockAdjust(r *http.Request) (int, any, error) {
 // Configuración del club (RD02-RD05)
 // ===========================================================================
 
-// La configuración es un único documento que no pasa por el CRUD genérico: si nunca se guardó
-// (o se reseteó la base) rigen estos valores.
-const configCollection, configID = "configuracion", "club"
+// Los plazos de reserva y cancelación (RD02-RD05) y la tarifa de la clase particular los fija el
+// club; el sistema solo los consulta.
+const configID = "club"
 
 func defaultClubConfig() M {
 	return M{
 		"freeCancellationHours":            6.0,
 		"lateCancellationRetentionPercent": 50.0,
 		"maxAdvanceBookingDays":            30.0,
+		"privateLessonHourlyRate":          6000.0,
 	}
 }
 
 func (a *app) clubConfig() (M, error) {
 	cfg := defaultClubConfig()
-	doc, ok, err := a.store.get(configCollection, configID)
-	if err != nil {
-		return nil, err
-	}
-	if ok {
-		for k := range cfg {
-			if _, has := doc[k]; has {
-				cfg[k] = f(doc, k)
-			}
-		}
-	}
 	cfg["id"] = configID
 	return cfg, nil
 }
@@ -180,37 +170,6 @@ func (a *app) clubConfig() (M, error) {
 func (a *app) getClubConfig(r *http.Request) (int, any, error) {
 	cfg, err := a.clubConfig()
 	if err != nil {
-		return 0, nil, err
-	}
-	return http.StatusOK, cfg, nil
-}
-
-// PUT /api/configuracion  { freeCancellationHours?, lateCancellationRetentionPercent?, maxAdvanceBookingDays? }
-func (a *app) updateClubConfig(r *http.Request) (int, any, error) {
-	body, err := readJSON(r)
-	if err != nil {
-		return 0, nil, err
-	}
-	cfg, err := a.clubConfig()
-	if err != nil {
-		return 0, nil, err
-	}
-	for k := range defaultClubConfig() {
-		if _, has := body[k]; has {
-			cfg[k] = f(body, k)
-		}
-	}
-	retention := f(cfg, "lateCancellationRetentionPercent")
-	days := f(cfg, "maxAdvanceBookingDays")
-	switch {
-	case f(cfg, "freeCancellationHours") <= 0:
-		return 0, nil, badRequest("El plazo de cancelación sin cargo debe ser mayor a 0 horas.")
-	case retention < 0 || retention > 100:
-		return 0, nil, badRequest("La retención por cancelación tardía debe estar entre 0% y 100%.")
-	case days < 1 || days != math.Trunc(days):
-		return 0, nil, badRequest("La antelación máxima de reserva debe ser un número entero de días, mínimo 1.")
-	}
-	if err := a.store.upsert(configCollection, cfg); err != nil {
 		return 0, nil, err
 	}
 	return http.StatusOK, cfg, nil
@@ -536,7 +495,6 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 		"relatedReservationId": id,
 		"relatedReceiptId":     res["depositReceiptNumber"],
 		"originalAmount":       deposit,
-		"status":               "pendiente",
 		"date":                 nowStamp(),
 		"processedBy":          "Sistema de Reservas",
 	}
@@ -1195,7 +1153,7 @@ func (a *app) classToggleAttendance(r *http.Request) (int, any, error) {
 		}
 		att := padAttendance(arr(st, "attendance"), idx)
 		cur, _ := att[idx].(string)
-		next := map[string]string{"P": "A", "A": "J", "J": "P"}[cur]
+		next := map[string]string{"P": "A", "A": "P"}[cur]
 		att[idx] = orDefault(next, "P")
 		st["attendance"] = att
 	}
@@ -1203,6 +1161,14 @@ func (a *app) classToggleAttendance(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	return a.attendanceResponse(r)
+}
+
+// La asistencia se registra como P (presente) o A (ausente).
+func checkAttendanceStatus(status string) error {
+	if status != "P" && status != "A" {
+		return badRequest("El estado de asistencia debe ser P (presente) o A (ausente).")
+	}
+	return nil
 }
 
 // POST /api/clases/{id}/asistencia/sesion  { sessionIndex, status }
@@ -1217,6 +1183,9 @@ func (a *app) classBulkAttendance(r *http.Request) (int, any, error) {
 	}
 	idx := int(math.Max(f(body, "sessionIndex"), 0))
 	status := orDefault(s(body, "status"), "P")
+	if err := checkAttendanceStatus(status); err != nil {
+		return 0, nil, err
+	}
 	for _, sti := range arr(cls, "students") {
 		st, ok := sti.(M)
 		if !ok {
@@ -1243,9 +1212,13 @@ func (a *app) classRecordAttendance(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	sid := s(body, "studentId")
+	status := s(body, "status")
+	if err := checkAttendanceStatus(status); err != nil {
+		return 0, nil, err
+	}
 	for _, sti := range arr(cls, "students") {
 		if st, ok := sti.(M); ok && s(st, "id") == sid {
-			st["attendance"] = append(arr(st, "attendance"), s(body, "status"))
+			st["attendance"] = append(arr(st, "attendance"), status)
 		}
 	}
 	if err := a.store.upsert("clases", cls); err != nil {
@@ -1291,12 +1264,6 @@ func computeInvoice(d M) (M, error) {
 	if subtotal <= 0 {
 		return nil, badRequest("El importe de la factura debe ser mayor a cero.")
 	}
-	taxRate := 21.0
-	if _, ok := d["taxRate"]; ok {
-		taxRate = f(d, "taxRate")
-	}
-	tax := math.Round(subtotal * taxRate / 100)
-	defaultStr(d, "type", "B")
 	defaultStr(d, "concept", s(items[0].(M), "description"))
 	defaultStr(d, "paymentMethod", "Tarjeta de Débito")
 	defaultStr(d, "issuedBy", "Administración General")
@@ -1305,9 +1272,7 @@ func computeInvoice(d M) (M, error) {
 	}
 	d["items"] = items
 	d["subtotal"] = subtotal
-	d["taxRate"] = taxRate
-	d["taxAmount"] = tax
-	d["total"] = subtotal + tax
+	d["total"] = subtotal
 	d["status"] = "emitida"
 	d["date"] = nowStamp()
 	return d, nil
@@ -1327,7 +1292,6 @@ func computeRefund(d M) (M, error) {
 		d["refundType"] = "parcial"
 	}
 	defaultStr(d, "refundMethod", "Crédito en cuenta de socio")
-	defaultStr(d, "status", "pendiente")
 	defaultStr(d, "processedBy", "Administración General")
 	for _, k := range []string{"relatedReservationId", "relatedReceiptId"} {
 		if s(d, k) == "" {
@@ -1336,40 +1300,6 @@ func computeRefund(d M) (M, error) {
 	}
 	d["date"] = nowStamp()
 	return d, nil
-}
-
-// POST /api/facturas/{id}/anular
-func (a *app) invoiceAnnul(r *http.Request) (int, any, error) {
-	inv, err := a.store.require("facturas", r.PathValue("id"))
-	if err != nil {
-		return 0, nil, err
-	}
-	inv["status"] = "anulada"
-	if err := a.store.upsert("facturas", inv); err != nil {
-		return 0, nil, err
-	}
-	return http.StatusOK, inv, nil
-}
-
-// PATCH /api/reembolsos/{id}/estado  { status }
-func (a *app) refundStatus(r *http.Request) (int, any, error) {
-	body, err := readJSON(r)
-	if err != nil {
-		return 0, nil, err
-	}
-	status := s(body, "status")
-	if !slices.Contains([]string{"pendiente", "procesado", "rechazado"}, status) {
-		return 0, nil, badRequest("status debe ser pendiente, procesado o rechazado.")
-	}
-	ref, err := a.store.require("reembolsos", r.PathValue("id"))
-	if err != nil {
-		return 0, nil, err
-	}
-	ref["status"] = status
-	if err := a.store.upsert("reembolsos", ref); err != nil {
-		return 0, nil, err
-	}
-	return http.StatusOK, ref, nil
 }
 
 // GET /api/socios: padrón reducido para elegir compañeros al reservar. Solo lo necesario para

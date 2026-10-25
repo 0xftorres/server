@@ -204,9 +204,8 @@ func (a *app) routes(frontendDist string) http.Handler {
 	// Documentos: los sube el personal; los descarga cualquier usuario logueado (reglamentos, títulos).
 	protected("POST /api/documentos", guard(staffOnly, a.uploadDocument))
 	mux.HandleFunc("GET /api/documentos/{id}", a.requireAuth(a.downloadDocument))
-	// Configuración del club: la lee cualquier usuario logueado (plazos de reserva y cancelación).
+	// Configuración del club: plazos de reserva y cancelación fijados por el club (solo consulta).
 	protected("GET /api/configuracion", a.getClubConfig)
-	protected("PUT /api/configuracion", guard(staffOnly, a.updateClubConfig))
 	// Reservas (alta propia: genera recibo de seña)
 	protected("GET /api/reservas", guard(membersAndStaff, a.listReservations))
 	protected("GET /api/reservas/ocupacion", guard(membersAndStaff, a.reservationsOccupancy))
@@ -236,8 +235,6 @@ func (a *app) routes(frontendDist string) http.Handler {
 	protected("POST /api/clases/{id}/asistencia/registrar", guard(a.classTeacher, a.classRecordAttendance))
 	protected("POST /api/clases-particulares/{id}/cancelar", guard(a.privateLessonOwner, a.privateCancel))
 	// Caja
-	protected("POST /api/facturas/{id}/anular", guard(staffOnly, a.invoiceAnnul))
-	protected("PATCH /api/reembolsos/{id}/estado", guard(staffOnly, a.refundStatus))
 	protected("PUT /api/usuarios/{id}/descuentos", guard(staffOnly, a.userDiscounts))
 	protected("GET /api/socios", guard(membersAndStaff, a.listMembers))
 	// CRUD genérico: los permisos por colección están en guardCreate / guardUpdate / guardDelete y visible.

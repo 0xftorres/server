@@ -4,6 +4,24 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 
 ## [Sin publicar]
 
+### Corregido
+- Un usuario que edita su propio perfil solo puede cambiar nombre, teléfono y foto: cualquier otro
+  campo (`role`, `email`, `dni`, descuentos) responde 403 en vez de ignorarse.
+
+### Eliminado
+- Datos de profesionales que el TP no pide: `specialty`, `experienceYears`, `bio`, `photo` y la
+  tarifa por docente `hourlyRatePrivate`. La clase particular se cobra a la tarifa única del club
+  (`privateLessonHourlyRate` en `GET /api/configuracion`).
+- `PUT /api/configuracion`: los plazos de reserva y cancelación los fija el club y el sistema solo
+  los consulta (`GET`).
+- Estado de asistencia `J` (justificado): la asistencia se registra como P o A y los endpoints
+  rechazan otros valores con 400.
+- Umbral mínimo de alerta de stock (`minAlertThreshold`, estado `alerta_baja`): el estado pasa a
+  ser `disponible` / `agotado`.
+- `POST /api/facturas/{id}/anular`, tipo de factura (A/B/C) y alícuota de IVA: la factura se numera
+  `FC-0001-…` y su total es la suma de los ítems.
+- `PATCH /api/reembolsos/{id}/estado` y el campo `status` de los reembolsos.
+
 ### Agregado
 - Roles Profesor y Entrenador: usuarios vinculados a una ficha de `profesores`. Un profesor solo
   tiene clases y un entrenador solo entrenamientos (`kind`), también cuando las carga el admin.
@@ -11,8 +29,8 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 - `GET /api/socios`: padrón reducido (id, nombre, DNI, N° de socio) para elegir compañeros al
   reservar. Lo consultan socios y personal.
 - El token incluye `dni` y `coachId`; el login también devuelve `coachId`.
-- `GET` / `PUT /api/configuracion`: plazo de cancelación sin cargo, retención por cancelación
-  tardía y antelación máxima de reserva (RD02–RD05). Sin documento guardado rigen 6 hs / 50% / 30 días.
+- `GET /api/configuracion`: plazo de cancelación sin cargo, retención por cancelación tardía y
+  antelación máxima de reserva (RD02–RD05): 6 hs / 50% / 30 días.
 - Alta y cambio de fecha de reservas: 400 si la fecha supera la antelación máxima (RD05).
 - `POST /api/documentos` y `GET /api/documentos/{id}`: archivos PDF, JPG o PNG de hasta 5 MB,
   guardados en base64 en la misma base. Torneos y ligas guardan el reglamento adjunto en

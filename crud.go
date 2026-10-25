@@ -65,7 +65,7 @@ func (a *app) nextID(col string, doc M) (string, error) {
 	case "recibos":
 		base = fmt.Sprintf("REC-%d-%d", year(), 1050+count)
 	case "facturas":
-		base = fmt.Sprintf("FC-%s-0001-%08d", orDefault(s(doc, "type"), "B"), 412+count+1)
+		base = fmt.Sprintf("FC-0001-%08d", 412+count+1)
 	case "reembolsos":
 		base = fmt.Sprintf("RMB-%d-%04d", year(), count+9)
 	default:
@@ -111,11 +111,12 @@ func (a *app) anyOther(col, exceptID string, match func(M) bool) (bool, error) {
 	return false, nil
 }
 
-func stockStatus(available, min float64) string {
-	if available <= min {
-		return "alerta_baja"
+// El stock se bloquea para reservar cuando no queda disponible.
+func stockStatus(available float64) string {
+	if available <= 0 {
+		return "agotado"
 	}
-	return "normal"
+	return "disponible"
 }
 
 func capTo30(x float64) float64 {
@@ -297,18 +298,13 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 		total := f(d, "totalStock")
 		inUse := f(d, "inUseStock")
 		available := math.Max(total-inUse, 0)
-		min := f(d, "minAlertThreshold")
-		if min <= 0 {
-			min = 1
-		}
 		defaultStr(d, "category", "Equipamiento")
 		defaultStr(d, "description", "")
 		defaultStr(d, "unit", "unidades")
 		d["totalStock"] = total
 		d["inUseStock"] = inUse
 		d["availableStock"] = available
-		d["minAlertThreshold"] = min
-		d["status"] = stockStatus(available, min)
+		d["status"] = stockStatus(available)
 	case "torneos":
 		defaultVal(d, "currentEnrolled", 0)
 		defaultStr(d, "status", "inscripcion_abierta")
@@ -346,7 +342,6 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 			return nil, err
 		}
 		defaultStr(d, "type", "Profesor")
-		defaultStr(d, "photo", "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80")
 	case "clases":
 		defaultStr(d, "kind", "clase")
 		defaultStr(d, "type", "grupal")
@@ -433,12 +428,10 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 		total := f(d, "totalStock")
 		inUse := f(d, "inUseStock")
 		available := math.Max(total-inUse, 0)
-		min := f(d, "minAlertThreshold")
 		d["totalStock"] = total
 		d["inUseStock"] = inUse
 		d["availableStock"] = available
-		d["minAlertThreshold"] = min
-		d["status"] = stockStatus(available, min)
+		d["status"] = stockStatus(available)
 	case "tipos-cancha":
 		name := strings.TrimSpace(s(d, "name"))
 		taken, err := a.anyOther(col, id, func(t M) bool { return strings.EqualFold(s(t, "name"), name) })
