@@ -550,7 +550,7 @@ const maxDocumentBytes = 5 << 20
 
 var documentTypes = []string{"application/pdf", "image/jpeg", "image/png"}
 
-// documentRef es lo que guardan torneos, ligas y fichas de docentes: sin el contenido.
+// documentRef es lo que guardan torneos, ligas y fichas de profesores: sin el contenido.
 func documentRef(doc M) M {
 	return M{"id": s(doc, "id"), "name": s(doc, "name"), "mimeType": s(doc, "mimeType"), "size": f(doc, "size")}
 }

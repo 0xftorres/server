@@ -158,7 +158,7 @@ func (a *app) normalizeLicense(d M) error {
 	return nil
 }
 
-// checkCoachQualified aplica RD09: un docente sin título habilitante vigente no puede tener clases,
+// checkCoachQualified aplica RD09: un profesor sin título habilitante vigente no puede tener clases,
 // entrenamientos ni turnos particulares a cargo.
 func (a *app) checkCoachQualified(coachID string) error {
 	coach, ok, err := a.store.get("profesores", coachID)
@@ -178,7 +178,7 @@ func (a *app) checkCoachQualified(coachID string) error {
 	return nil
 }
 
-// checkCoachChange revalida RD09 solo si cambia el docente, para que una clase ya asignada siga editable.
+// checkCoachChange revalida RD09 solo si cambia el profesor, para que una clase ya asignada siga editable.
 func (a *app) checkCoachChange(existing, d M) error {
 	if s(d, "coachId") == s(existing, "coachId") {
 		return nil

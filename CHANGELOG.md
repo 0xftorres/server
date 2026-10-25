@@ -4,13 +4,22 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 
 ## [Sin publicar]
 
+### Cambiado
+- Datos iniciales nuevos en `seed/seed.json`: socios con nombres comunes (Juan Sánchez, Melina Romo…),
+  canchas con nombres de ídolos del deporte argentino (Lionel Messi, Dibu Martínez…), un torneo a 16
+  jugadores con cuadro desde octavos, un torneo finalizado con campeona, una liga en curso con tabla
+  calculada a partir de los resultados, y fechas alrededor de octubre de 2026. El mismo dataset se
+  usa en el Modo Demo del front (`src/utils/mockData.js`). Los usuarios de prueba conservan sus
+  emails; los profesores son `profesor@`, `entrenador@` y `diego.paredes@tenisahora.com`.
+  Para aplicarlo en una base ya creada: `POST /api/admin/reset` o borrar el archivo SQLite.
+
 ### Corregido
 - Un usuario que edita su propio perfil solo puede cambiar nombre, teléfono y foto: cualquier otro
   campo (`role`, `email`, `dni`, descuentos) responde 403 en vez de ignorarse.
 
 ### Eliminado
 - Datos de profesionales que el TP no pide: `specialty`, `experienceYears`, `bio`, `photo` y la
-  tarifa por docente `hourlyRatePrivate`. La clase particular se cobra a la tarifa única del club
+  tarifa por profesor `hourlyRatePrivate`. La clase particular se cobra a la tarifa única del club
   (`privateLessonHourlyRate` en `GET /api/configuracion`).
 - `PUT /api/configuracion`: los plazos de reserva y cancelación los fija el club y el sistema solo
   los consulta (`GET`).
@@ -34,9 +43,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 - Alta y cambio de fecha de reservas: 400 si la fecha supera la antelación máxima (RD05).
 - `POST /api/documentos` y `GET /api/documentos/{id}`: archivos PDF, JPG o PNG de hasta 5 MB,
   guardados en base64 en la misma base. Torneos y ligas guardan el reglamento adjunto en
-  `internalRulesDocument` (RF041, RF048) y las fichas de docentes el título en `licenseDetails.document`.
-- Clases, entrenamientos y turnos particulares: 400 si el docente no tiene el título habilitante
-  vigente, habilitado y con documento (RD09). Se valida al crear y al cambiar de docente.
+  `internalRulesDocument` (RF041, RF048) y las fichas de profesores el título en `licenseDetails.document`.
+- Clases, entrenamientos y turnos particulares: 400 si el profesor no tiene el título habilitante
+  vigente, habilitado y con documento (RD09). Se valida al crear y al cambiar de profesor.
 
 ### Cambiado
 - Permisos por rol en todas las rutas (`authz.go`). Antes cualquier usuario logueado podía
@@ -48,9 +57,9 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 - Sin medio de pago informado, el pago de saldo queda en Mercado Pago (QR) y la factura en Tarjeta
   de Débito (antes Efectivo, que no está entre los medios de RD11).
 - `tests/smoke.py` usa fechas relativas a hoy para las reservas.
-- Alta de docentes: exige título, institución, licencia, vencimiento y documento (RD08). Antes se
+- Alta de profesores: exige título, institución, licencia, vencimiento y documento (RD08). Antes se
   completaban con valores inventados y un nombre de PDF ficticio (`digitalDocumentUrl`, que se quita).
-- El seed trae un PDF de muestra por docente, en la colección `documentos`.
+- El seed trae un PDF de muestra por profesor, en la colección `documentos`.
 - `PUT /reglamento` ya no borra el texto si el cuerpo no trae `internalRules`.
 
 ## [2.0.0] — 2026-10-23
@@ -108,7 +117,7 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 - Endpoints de negocio: estado y disponibilidad de canchas, ajuste de stock, alta de reserva
   con recibo de seña, pago de saldo, cancelación con reembolso o cargo (RD02–RD04, RD06),
   reglamentos, inscripciones y enfrentamientos de torneos y ligas, resultado de liga con tabla,
-  disponibilidad y certificación de docentes, alumnos y asistencia de clases (RD07, RD10),
+  disponibilidad y certificación de profesores, alumnos y asistencia de clases (RD07, RD10),
   cancelación de turnos particulares, anulación de facturas, estado de reembolsos, descuentos
   por usuario y `POST /admin/reset`.
 

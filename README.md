@@ -14,7 +14,7 @@ alcance, los endpoints y las recomendaciones para esa versión.
 | HTTP | `net/http` de la librería estándar (router con método y parámetros, CORS permisivo, logs, archivos estáticos) |
 | Base de datos | SQLite vía `modernc.org/sqlite` (Go puro: sin cgo, sin compilador C, sin DLL) |
 | Auth | bcrypt (`golang.org/x/crypto`) para contraseñas, JWT HS256 (`crypto/hmac`) |
-| Datos iniciales | `seed/seed.json`, exportado del mock del front |
+| Datos iniciales | `seed/seed.json`, el mismo dataset que el mock del front (`src/utils/mockData.js`) |
 
 ## Requisitos
 
@@ -50,8 +50,8 @@ Todos los usuarios del seed tienen contraseña **`123456`**.
 |---|---|
 | `admin@tenisahora.com` | Empleado (panel de administración) |
 | `socio@tenisahora.com` | Socio |
-| `santiago.alvarez@tenisahora.com` | Profesor (da clases) |
-| `valeria.morales@tenisahora.com`, `lucas.delgado@tenisahora.com` | Entrenador (da entrenamientos) |
+| `profesor@tenisahora.com` | Profesor (da clases) |
+| `entrenador@tenisahora.com`, `diego.paredes@tenisahora.com` | Entrenador (da entrenamientos) |
 | cualquier otro de `seed/seed.json` → `usuarios` | Socio |
 
 Un usuario profesional tiene `role: "coach"` y un `coachId` que apunta a su ficha en `profesores`;
@@ -147,8 +147,8 @@ estado `disponible` / `agotado`), `clases` (cupo ≤ 30, RD07), `descuentos` (c�
 | POST | `/torneos/{id}/enfrentamientos` · `/ligas/{id}/enfrentamientos` | `{ round, p1, p2, court, date }` | `{ success, match }` |
 | PUT | `/torneos/{id}/enfrentamientos/{mid}` · `/ligas/{id}/enfrentamientos/{mid}` | campos a modificar | `{ success, match }` |
 | POST | `/ligas/{id}/enfrentamientos/{mid}/resultado` | `{ score, winner }` | `{ success, match, standings }` (3 pts por victoria, no duplica si ya estaba finalizado) |
-| PUT | `/profesores/{id}/disponibilidad` | `{ availableHours }` | docente |
-| PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` (`document: { id }` para el título) | docente (400 si el título queda incompleto, RD08) |
+| PUT | `/profesores/{id}/disponibilidad` | `{ availableHours }` | profesor |
+| PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` (`document: { id }` para el título) | profesor (400 si el título queda incompleto, RD08) |
 | POST | `/clases/{id}/alumnos` | `{ name, dni, phone }` | `{ success, student }` (409 si el cupo está completo, RD10) |
 | DELETE | `/clases/{id}/alumnos/{sid}` | — | `{ success }` |
 | POST | `/clases/{id}/asistencia/alternar` | `{ studentId, sessionIndex }` | `{ success, classes }` (P → A → P) |
@@ -175,7 +175,7 @@ api/
 ├── go.mod / go.sum
 ├── ci/Dockerfile      # imagen del deploy
 ├── .github/workflows/deploy.yml
-├── seed/seed.json     # datos iniciales (del mock del front)
+├── seed/seed.json     # datos iniciales (mismo dataset que el mock del front)
 ├── main.go            # configuración, .env, router, CORS, logs, /health, archivos estáticos del front
 ├── db.go              # Store: tabla documents (collection, id, data JSON)
 ├── auth.go            # login, registro, JWT, middleware

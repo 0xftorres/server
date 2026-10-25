@@ -120,9 +120,9 @@ def main():
     check("disponibilidad sin días -> 400", st == 400)
 
     # Reservas: alta con recibo, modificar, pagar saldo, cancelar dentro y fuera de plazo
-    booking = {"courtId": "cancha-2", "courtName": "Cancha 2 - Gabriela Sabatini (Ladrillo)", "surfaceType": "Ladrillo",
+    booking = {"courtId": "cancha-2", "courtName": "Cancha 2 - Dibu Martínez (Ladrillo)", "surfaceType": "Ladrillo",
                "date": in_days(10), "startTime": "10:00", "endTime": "12:00", "durationHours": 2, "playersType": "dobles",
-               "participants": [{"name": "Federico Gómez", "dni": "38.452.129", "isLead": True}],
+               "participants": [{"name": "Juan Sánchez", "dni": "35.678.912", "isLead": True}],
                "courtCost": 9600, "equipmentCost": 0, "totalCost": 9600, "depositPaid": 4800, "remainingBalance": 4800,
                "depositPaymentMethod": "Tarjeta de Débito"}
     st, res = call("POST", "/reservas", booking, expect=201)
@@ -159,7 +159,7 @@ def main():
     # Torneos: inscripción, enfrentamiento, reglamento
     st, enr = call("POST", "/torneos/trn-02/inscripciones", {"name": "Jugadora Test", "dni": "1", "partnerName": "Pareja"}, expect=201)
     check("inscripción a torneo", enr["participant"]["name"] == "Jugadora Test")
-    st, m = call("POST", "/torneos/trn-02/enfrentamientos", {"round": "Cuartos", "p1": "A", "p2": "B", "court": "Cancha 3", "date": "2026-09-16 10:00"}, expect=201)
+    st, m = call("POST", "/torneos/trn-02/enfrentamientos", {"round": "Cuartos", "p1": "A", "p2": "B", "court": "Cancha 3", "date": "2026-11-14 10:00"}, expect=201)
     st, m2 = call("PUT", f"/torneos/trn-02/enfrentamientos/{m['match']['id']}", {"score": "6-1, 6-2", "winner": "A", "status": "finalizado"}, expect=200)
     check("enfrentamiento de torneo alta + resultado", m2["match"]["winner"] == "A")
     st, _ = call("POST", "/torneos/trn-02/enfrentamientos", {"p1": "A", "p2": "A"})
@@ -220,11 +220,11 @@ def main():
     # Título habilitante obligatorio (RD08 / RD09)
     lic = {"titleName": "Profesor Smoke", "institution": "AAT", "licenseNumber": "AAT-1", "expiryDate": in_days(365)}
     st, _ = call("POST", "/profesores", {"name": "Prof. Sin Título", "type": "Profesor"})
-    check("docente sin título -> 400 (RD08)", st == 400)
+    check("profesor sin título -> 400 (RD08)", st == 400)
     st, _ = call("POST", "/profesores", {"name": "Prof. Sin Documento", "type": "Profesor", "licenseDetails": lic})
-    check("docente sin documento del título -> 400 (RD08)", st == 400)
+    check("profesor sin documento del título -> 400 (RD08)", st == 400)
     st, prof = call("POST", "/profesores", {"name": "Prof. Smoke", "type": "Profesor", "licenseDetails": dict(lic, document={"id": doc["id"]})}, expect=201)
-    check("docente con título y documento", prof["licenseDetails"]["document"]["id"] == doc["id"] and prof["licenseDetails"]["status"] == "habilitado")
+    check("profesor con título y documento", prof["licenseDetails"]["document"]["id"] == doc["id"] and prof["licenseDetails"]["status"] == "habilitado")
     st, _ = call("PUT", f"/profesores/{prof['id']}/certificacion", {"expiryDate": in_days(-1)}, expect=200)
     st, _ = call("POST", "/clases", {"name": "Clase Vencida", "kind": "clase", "coachId": prof["id"], "maxCapacity": 5})
     check("clase con título vencido -> 400 (RD09)", st == 400)
@@ -269,7 +269,7 @@ def main():
     check("usuario profesional sin ficha -> 400", st == 400)
 
     TOKEN = login_as("socio@tenisahora.com")
-    socio_dni = "38.452.129"
+    socio_dni = "35.678.912"
     st, _ = call("GET", "/usuarios")
     check("socio no ve usuarios -> 403", st == 403)
     st, _ = call("PUT", "/usuarios/usr-01", {"role": "admin"})
@@ -284,7 +284,7 @@ def main():
     check("socio ve solo sus recibos", recs and all(r["clientDni"] == socio_dni for r in recs))
     st, clases = call("GET", "/clases", expect=200)
     check("socio ve clases sin alumnos", clases and all("students" not in c for c in clases))
-    own_booking = dict(booking, participants=[{"name": "Federico Gómez", "dni": socio_dni}])
+    own_booking = dict(booking, participants=[{"name": "Juan Sánchez", "dni": socio_dni}])
     st, _ = call("POST", "/reservas", dict(booking, participants=[{"name": "Otro", "dni": "1"}]))
     check("socio no reserva a nombre de otro -> 403", st == 403)
     st, own = call("POST", "/reservas", own_booking, expect=201)
@@ -302,19 +302,19 @@ def main():
     check("socio descarga documentos", st == 200 and raw.startswith(b"%PDF-"))
     st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Otro", "dni": "1"})
     check("socio no inscribe a otro -> 403", st == 403)
-    st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Federico Gómez", "dni": socio_dni})
+    st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Juan Sánchez", "dni": socio_dni})
     check("socio se inscribe a un torneo", st == 201)
-    st, _ = call("POST", "/clases/cls-01/alumnos", {"name": "Federico Gómez", "dni": socio_dni})
+    st, _ = call("POST", "/clases/cls-01/alumnos", {"name": "Juan Sánchez", "dni": socio_dni})
     check("socio se inscribe a una clase", st == 201)
     st, _ = call("POST", "/clases/cls-01/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
     check("socio no toma asistencia -> 403", st == 403)
-    lesson = {"coachId": "coach-01", "coachName": "Prof. Santiago Álvarez", "studentName": "Federico Gómez", "studentDni": socio_dni, "date": "2026-11-12", "time": "10:00"}
+    lesson = {"coachId": "coach-01", "coachName": "Gustavo Ferrari", "studentName": "Juan Sánchez", "studentDni": socio_dni, "date": "2026-11-12", "time": "10:00"}
     st, _ = call("POST", "/clases-particulares", dict(lesson, kind="clase"))
     check("socio pide clase particular a un profesor", st == 201)
     st, _ = call("POST", "/clases-particulares", dict(lesson, kind="entrenamiento"))
     check("entrenamiento con un profesor -> 400", st == 400)
 
-    TOKEN, prof = login_as("santiago.alvarez@tenisahora.com", full=True)
+    TOKEN, prof = login_as("profesor@tenisahora.com", full=True)
     check("login profesor", prof["rol"] == "Profesor" and prof["coachId"] == "coach-01")
     st, clases = call("GET", "/clases", expect=200)
     check("profesor ve solo sus clases, con alumnos", clases and all(c["coachId"] == "coach-01" and "students" in c for c in clases))
@@ -331,7 +331,7 @@ def main():
     st, _ = call("PUT", "/profesores/coach-02", {"availableHours": "Smoke"})
     check("profesor no edita fichas ajenas -> 403", st == 403)
 
-    TOKEN, ent = login_as("valeria.morales@tenisahora.com", full=True)
+    TOKEN, ent = login_as("entrenador@tenisahora.com", full=True)
     check("login entrenador", ent["rol"] == "Entrenador")
     st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02"), expect=201)
     check("clase particular del entrenador queda como entrenamiento", p["kind"] == "entrenamiento")

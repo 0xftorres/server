@@ -225,7 +225,7 @@ func (a *app) routes(frontendDist string) http.Handler {
 	protected("POST /api/ligas/{id}/enfrentamientos", guard(staffOnly, a.leagueAddMatch))
 	protected("PUT /api/ligas/{id}/enfrentamientos/{mid}", guard(staffOnly, a.leagueUpdateMatch))
 	protected("POST /api/ligas/{id}/enfrentamientos/{mid}/resultado", guard(staffOnly, a.leagueMatchScore))
-	// Docentes, clases y entrenamientos
+	// Profesores, clases y entrenamientos
 	protected("PUT /api/profesores/{id}/disponibilidad", guard(coachSelf, a.coachAvailability))
 	protected("PUT /api/profesores/{id}/certificacion", guard(staffOnly, a.coachLicense))
 	protected("POST /api/clases/{id}/alumnos", guard(a.classEnrollment, a.classEnroll))
