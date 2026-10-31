@@ -182,9 +182,9 @@ COACH_NAME = {c[0]: c[1] for c in COACHES}
 
 # ---------------------------------------------------------------- stock
 STOCK = [
-    {"id": "item-redes", "name": "Redes de tenis", "category": "Redes", "totalStock": 6, "inUseStock": 5, "availableStock": 1, "unit": "unidades", "itemPrice": 0, "status": "disponible", "description": "Una por cancha habilitada; la restante es de repuesto."},
-    {"id": "item-pelotas", "name": "Tubos de pelotas", "category": "Pelotas", "totalStock": 40, "inUseStock": 12, "availableStock": 28, "unit": "tubos", "itemPrice": 0, "status": "disponible", "description": "Tubos de 3 pelotas presurizadas. Se entrega uno por reserva."},
-    {"id": "item-raquetas", "name": "Raquetas de préstamo", "category": "Raquetas", "totalStock": 20, "inUseStock": 6, "availableStock": 14, "unit": "raquetas", "itemPrice": 0, "status": "disponible", "description": "Raquetas para socios que no traen la propia."},
+    {"id": "item-redes", "name": "Redes de tenis", "category": "Redes", "totalStock": 6, "inUseStock": 0, "availableStock": 6, "unit": "unidades", "itemPrice": 0, "status": "disponible", "description": "Se asigna una por alquiler y vuelve al stock al finalizar."},
+    {"id": "item-pelotas", "name": "Tubos de pelotas", "category": "Pelotas", "totalStock": 40, "inUseStock": 0, "availableStock": 40, "unit": "tubos", "itemPrice": 0, "status": "disponible", "description": "Tubos de 3 pelotas presurizadas. Se entrega uno por reserva."},
+    {"id": "item-raquetas", "name": "Raquetas de préstamo", "category": "Raquetas", "totalStock": 20, "inUseStock": 0, "availableStock": 20, "unit": "raquetas", "itemPrice": 0, "status": "disponible", "description": "Raquetas para socios que no traen la propia."},
     {"id": "item-grips", "name": "Overgrips", "category": "Accesorios", "totalStock": 50, "inUseStock": 0, "availableStock": 50, "unit": "unidades", "itemPrice": 2500, "status": "disponible", "description": "Overgrips a la venta en recepción."},
 ]
 

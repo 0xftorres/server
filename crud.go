@@ -186,6 +186,32 @@ func (a *app) checkCoachChange(existing, d M) error {
 	return a.checkCoachQualified(s(d, "coachId"))
 }
 
+// checkPrivateLessonConflict impide dos turnos particulares el mismo día y horario para el mismo
+// alumno o el mismo profesional. Misma regla que findPrivateLessonConflict del front.
+func (a *app) checkPrivateLessonConflict(d M) error {
+	if s(d, "status") == "cancelada" {
+		return nil
+	}
+	lessons, err := a.store.list("clases-particulares")
+	if err != nil {
+		return err
+	}
+	slot := func(t string) string { return strings.ToLower(strings.Join(strings.Fields(t), "")) }
+	dni := cleanDNI(s(d, "studentDni"))
+	for _, l := range lessons {
+		if s(l, "id") == s(d, "id") || s(l, "status") == "cancelada" || s(l, "date") != s(d, "date") || slot(s(l, "time")) != slot(s(d, "time")) {
+			continue
+		}
+		if dni != "" && cleanDNI(s(l, "studentDni")) == dni {
+			return conflict(fmt.Sprintf("Ya hay un turno particular para ese alumno el %s a las %s, con %s.", s(l, "date"), s(l, "time"), s(l, "coachName")))
+		}
+		if s(d, "coachId") != "" && s(l, "coachId") == s(d, "coachId") {
+			return conflict(fmt.Sprintf("%s ya tiene un turno el %s a las %s.", s(l, "coachName"), s(l, "date"), s(l, "time")))
+		}
+	}
+	return nil
+}
+
 // checkClassCapacity aplica RD07 (tope de 30) y RD10 (cupo del tipo de cancha de la comisión).
 // courtAssigned trae la superficie entre paréntesis, p. ej. "Cancha 3 (Cemento)"; si no se
 // reconoce un tipo, queda solo el tope de 30. Sin cupo informado se usa el máximo permitido.
@@ -366,6 +392,9 @@ func (a *app) applyCreateDefaults(col string, d M) (M, error) {
 		if err := a.checkCoachQualified(s(d, "coachId")); err != nil {
 			return nil, err
 		}
+		if err := a.checkPrivateLessonConflict(d); err != nil {
+			return nil, err
+		}
 	case "recibos":
 		defaultStr(d, "date", nowStamp())
 		defaultStr(d, "status", "completado")
@@ -427,6 +456,9 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 	case "stock":
 		total := f(d, "totalStock")
 		inUse := f(d, "inUseStock")
+		if total < inUse {
+			return nil, badRequest(fmt.Sprintf("El stock total no puede ser menor a lo que está prestado en canchas (%s).", numStr(inUse)))
+		}
 		available := math.Max(total-inUse, 0)
 		d["totalStock"] = total
 		d["inUseStock"] = inUse
@@ -468,6 +500,9 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 		if err := a.checkCoachChange(existing, d); err != nil {
 			return nil, err
 		}
+		if err := a.checkPrivateLessonConflict(d); err != nil {
+			return nil, err
+		}
 	case "descuentos":
 		code := strings.ToUpper(strings.TrimSpace(s(d, "code")))
 		taken, err := a.anyOther(col, id, func(x M) bool { return s(x, "code") == code })
@@ -490,6 +525,11 @@ func (a *app) applyUpdateRules(col string, existing, patch M) (M, error) {
 // ---------------------------------------------------------------------------
 func (a *app) checkDelete(col string, doc M) error {
 	switch col {
+	case "reservas":
+		// El equipamiento de un alquiler en juego vuelve al stock al cobrar el saldo.
+		if s(doc, "status") == resPlaying {
+			return conflict("No se puede eliminar una reserva en juego: primero hay que finalizar el alquiler.")
+		}
 	case "tipos-cancha":
 		name := s(doc, "name")
 		used, err := a.anyOther("canchas", "", func(c M) bool { return s(c, "surfaceType") == name })
@@ -579,7 +619,7 @@ func (a *app) create(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	if col == "reservas" {
-		// Las reservas tienen alta propia (genera recibo de seña): ver createReservationInner.
+		// Las reservas tienen alta propia (validaciones y estado pendiente de pago): ver createReservationInner.
 		res, err := a.createReservationInner(body)
 		if err != nil {
 			return 0, nil, err
@@ -589,6 +629,19 @@ func (a *app) create(r *http.Request) (int, any, error) {
 	doc, err := a.applyCreateDefaults(col, body)
 	if err != nil {
 		return 0, nil, err
+	}
+	if col == "recibos" {
+		// Todo recibo corresponde a un cobro electrónico aprobado (RD11).
+		if taken, err := a.store.exists(col, s(doc, "id")); err != nil {
+			return 0, nil, err
+		} else if taken {
+			if doc["id"], err = a.nextID(col, doc); err != nil {
+				return 0, nil, err
+			}
+		}
+		if err := a.attachPayment(claimsOf(r), doc); err != nil {
+			return 0, nil, err
+		}
 	}
 	if err := a.store.insert(col, doc); err != nil {
 		return 0, nil, err

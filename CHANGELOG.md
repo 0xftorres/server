@@ -4,7 +4,31 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
 
 ## [Sin publicar]
 
+### Agregado
+- Pasarela de pagos simulada (`POST /api/pagos`, `payments.go`): débito, crédito y QR de Mercado Pago
+  con las tarjetas de prueba de Mercado Pago; el nombre del titular define si se aprueba o se rechaza
+  (402). Cada pago aprobado se usa una sola vez y por el importe exacto.
+- Estados de reserva `pendiente_pago` y `en_juego`. `POST /api/reservas/{id}/pagar-sena` confirma la
+  reserva con un pago aprobado (RD01, TC_003, TC_005) y `POST /api/reservas/{id}/iniciar` descuenta del
+  stock la red, el tubo de pelotas y las raquetas (TC_002).
+- Alta de reserva: 400 si dura más de 2 horas, si la fecha u hora ya pasaron o si no trae 2 (singles)
+  o 4 (dobles) jugadores con DNI distinto; 409 si la cancha o un jugador ya tienen una reserva
+  superpuesta o si no hay stock de red, pelotas o raquetas (TC_001).
+- 409 en inscripciones repetidas por DNI a torneos, ligas y clases, y en turnos particulares
+  superpuestos para el mismo alumno o profesional (las mismas reglas que ya tenía la demo).
+- `GET /api/clases` para un socio incluye `enrolled` (si está inscripto), que el front ya usaba.
+
 ### Cambiado
+- `POST /api/reservas` registra la reserva pendiente de pago, sin recibo, y calcula costo y seña con la
+  tarifa de la cancha; ignora los importes y el medio de pago del cuerpo.
+- `POST /api/reservas/{id}/pagar-saldo` exige la reserva en juego y un `transactionId`, devuelve el
+  equipamiento al stock y responde `{ data, receipt }`.
+- `POST /api/recibos` exige el `transactionId` de un pago aprobado y toma de él el medio de pago.
+- `PUT /api/reservas/{id}` solo modifica reservas pendientes o confirmadas, revalida horario, cancha y
+  jugadores, y no cambia estado, cobros ni costos.
+- No se elimina una reserva en juego ni se baja el stock total por debajo de lo prestado en canchas.
+- Seed: redes, pelotas y raquetas sin unidades en uso, porque ninguna reserva arranca en juego.
+- Los recibos de reserva incluyen fecha y horario del turno, operación y últimos dígitos de la tarjeta.
 - Datos iniciales nuevos en `seed/seed.json`: socios con nombres comunes (Juan Sánchez, Melina Romo…),
   canchas con nombres de ídolos del deporte argentino (Lionel Messi, Dibu Martínez…), un torneo a 16
   jugadores con cuadro desde octavos, un torneo finalizado con campeona, una liga en curso con tabla

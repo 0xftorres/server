@@ -76,8 +76,11 @@ func visible(c Claims, col string, d M) M {
 			}
 			return nil
 		}
-		// Un socio ve la oferta y el cupo, no los datos de los demás alumnos.
+		// Un socio ve la oferta y el cupo, no los datos de los demás alumnos; solo si él está inscripto.
 		out := maps.Clone(d)
+		out["enrolled"] = slices.ContainsFunc(arr(d, "students"), func(st any) bool {
+			return c.Dni != "" && cleanDNI(s(asMap(st), "dni")) == cleanDNI(c.Dni)
+		})
 		delete(out, "students")
 		return out
 	case "reservas":

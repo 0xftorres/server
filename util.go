@@ -66,6 +66,11 @@ func merge(base, patch M) M {
 	return out
 }
 
+// cleanDNI deja solo los dígitos, para comparar DNI cargados con o sin puntos.
+func cleanDNI(v string) string {
+	return digitsOnly(v)
+}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def

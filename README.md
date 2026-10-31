@@ -123,8 +123,43 @@ Colecciones: `usuarios`, `canchas`, `tipos-cancha`, `stock`, `reservas`, `torneo
 
 Reglas de alta/modificación destacadas: `usuarios` (email único, `password` → `passwordHash`,
 hash nunca se devuelve), `tipos-cancha` (nombre único, cupo ≤ 30), `stock` (recalcula disponible y
-estado `disponible` / `agotado`), `clases` (cupo ≤ 30, RD07), `descuentos` (código único en mayúsculas),
-`facturas` (calcula el total de los ítems), `reembolsos` (total/parcial), `reservas` (PUT recalcula fin, costo y saldo).
+estado `disponible` / `agotado`; el total no baja de lo prestado en canchas), `clases` (cupo ≤ 30, RD07),
+`clases-particulares` (sin dos turnos a la misma hora para el mismo alumno o profesional), `descuentos`
+(código único en mayúsculas), `facturas` (calcula el total de los ítems), `reembolsos` (total/parcial),
+`recibos` (exige `transactionId` de un pago aprobado y toma de él el medio de pago), `reservas` (PUT
+solo con la reserva pendiente o confirmada; revalida horario, cancha y jugadores y recalcula fin, costo
+y saldo; el estado y los cobros solo cambian por los endpoints de negocio).
+
+### Reservas
+
+Estados: `pendiente_pago` (registrada, sin seña) → `confirmada` (seña del 50 % abonada, RD01) →
+`en_juego` (alquiler iniciado: la red, el tubo de pelotas y las raquetas salen del stock) →
+`finalizada` (saldo abonado: el equipamiento vuelve al stock). Se cancela mientras está pendiente
+(sin cargo) o confirmada (RD02-RD04). El costo sale de la tarifa de la cancha, no del cuerpo.
+
+Validaciones del alta: hasta 2 horas, fecha y hora no pasadas, antelación máxima (RD05), 2 jugadores
+(singles) o 4 (dobles) con nombre y DNI sin repetir, cancha sin mantenimiento ni bloqueos (RD06), sin
+superposición con otra reserva de la cancha o de alguno de los jugadores, y stock de red, pelotas y
+raquetas (TC_001).
+
+### Pagos (pasarela simulada)
+
+`POST /pagos` autoriza el cobro con tarjeta de débito, tarjeta de crédito o QR de Mercado Pago (RD11)
+sin mover dinero: solo acepta tarjetas de prueba (ficticias) y devuelve una transacción `MP-########`
+aprobada, o 402 si se rechaza. Cada pago se usa una sola vez (seña, saldo o recibo) y por el importe
+exacto. De la tarjeta se guardan solo la marca y los últimos 4 dígitos.
+
+| Tipo | Marca | Número | Código | Vencimiento |
+|---|---|---|---|---|
+| Crédito | Visa | `4509 9535 6623 3704` | `123` | `11/30` |
+| Crédito | Mastercard | `5031 7557 3453 0604` | `123` | `11/30` |
+| Crédito | American Express | `3711 803032 57522` | `1234` | `11/30` |
+| Débito | Visa | `4002 7686 9439 5619` | `123` | `11/30` |
+| Débito | Mastercard | `5287 3383 1025 3304` | `123` | `11/30` |
+
+El nombre del titular define el resultado, igual que en el entorno de pruebas de Mercado Pago:
+`APRO` (o cualquier otro nombre) aprueba; `FUND` (saldo insuficiente), `SECU` (código de seguridad),
+`EXPI` (vencimiento), `CALL`, `FORM` y `OTHE` rechazan; `CONT` queda pendiente y no confirma la operación.
 
 ### Negocio
 
@@ -138,18 +173,21 @@ estado `disponible` / `agotado`), `clases` (cupo ≤ 30, RD07), `descuentos` (c�
 | PATCH | `/canchas/{id}/estado` | `{ status, maintenanceNotes }` | cancha |
 | PUT | `/canchas/{id}/disponibilidad` | `{ days, openTime, closeTime, slotMinutes, blockedRanges, notes }` | cancha |
 | PATCH | `/stock/{id}/ajuste` | `{ totalStock }` | ítem |
-| POST | `/reservas` | datos de la reserva | `{ data, receipt }` (recibo de seña 50%, RD01) — 409 si la cancha está en mantenimiento (RD06), 400 si la fecha supera la antelación máxima (RD05) |
-| POST | `/reservas/{id}/pagar-saldo` | `{ paymentMethod }` | reserva finalizada + recibo final |
-| POST | `/reservas/{id}/cancelar` | — | `{ data, isWithinFreeWindow, refund, penaltyReceipt }` (RD02–RD04; las horas se calculan con el inicio de la reserva y el plazo y la retención salen de `/configuracion`) |
+| POST | `/pagos` | `{ paymentMethod, amount, concept, card?: { number, holder, expiry, cvv } }` | transacción aprobada (201) o rechazo (402) |
+| POST | `/reservas` | `{ courtId, date, startTime, durationHours, playersType, participants }` | `{ data }` reserva pendiente de pago con `depositAmount` (ver validaciones en *Reservas*) |
+| POST | `/reservas/{id}/pagar-sena` | `{ transactionId }` | `{ data, receipt }` reserva confirmada + recibo de seña (titular o personal) |
+| POST | `/reservas/{id}/iniciar` | — | reserva en juego; descuenta el equipamiento del stock (409 sin stock o sin seña). Solo personal |
+| POST | `/reservas/{id}/pagar-saldo` | `{ transactionId }` | `{ data, receipt }` reserva finalizada + recibo final; devuelve el equipamiento. Solo personal |
+| POST | `/reservas/{id}/cancelar` | — | `{ data, isWithinFreeWindow, refund, penaltyReceipt }` (RD02–RD04; las horas se calculan con el inicio de la reserva y el plazo y la retención salen de `/configuracion`; pendiente de pago: sin reembolso ni cargo) |
 | PUT | `/torneos/{id}/reglamento` · `/ligas/{id}/reglamento` | `{ internalRules?, internalRulesDocument? }` (`{ id }` de un documento; `null` lo quita) | competencia |
-| POST | `/torneos/{id}/inscripciones` · `/ligas/{id}/inscripciones` | `{ name, dni, phone, partnerName, partnerDni }` | `{ success, participant }` (409 si no hay cupo) |
+| POST | `/torneos/{id}/inscripciones` · `/ligas/{id}/inscripciones` | `{ name, dni, phone, partnerName, partnerDni }` | `{ success, participant }` (409 si no hay cupo o el DNI ya está inscripto) |
 | DELETE | `/torneos/{id}/inscripciones/{pid}` · `/ligas/{id}/inscripciones/{pid}` | — | `{ success }` |
 | POST | `/torneos/{id}/enfrentamientos` · `/ligas/{id}/enfrentamientos` | `{ round, p1, p2, court, date }` | `{ success, match }` |
 | PUT | `/torneos/{id}/enfrentamientos/{mid}` · `/ligas/{id}/enfrentamientos/{mid}` | campos a modificar | `{ success, match }` |
 | POST | `/ligas/{id}/enfrentamientos/{mid}/resultado` | `{ score, winner }` | `{ success, match, standings }` (3 pts por victoria, no duplica si ya estaba finalizado) |
 | PUT | `/profesores/{id}/disponibilidad` | `{ availableHours }` | profesor |
 | PUT | `/profesores/{id}/certificacion` | campos de `licenseDetails` (`document: { id }` para el título) | profesor (400 si el título queda incompleto, RD08) |
-| POST | `/clases/{id}/alumnos` | `{ name, dni, phone }` | `{ success, student }` (409 si el cupo está completo, RD10) |
+| POST | `/clases/{id}/alumnos` | `{ name, dni, phone }` | `{ success, student }` (409 si el cupo está completo, RD10, o el alumno ya está inscripto) |
 | DELETE | `/clases/{id}/alumnos/{sid}` | — | `{ success }` |
 | POST | `/clases/{id}/asistencia/alternar` | `{ studentId, sessionIndex }` | `{ success, classes }` (P → A → P) |
 | POST | `/clases/{id}/asistencia/sesion` | `{ sessionIndex, status }` | `{ success, classes }` (`status` P o A) |
@@ -165,8 +203,10 @@ python tests\smoke.py                      # http://localhost:5090/api
 python tests\smoke.py http://otra-ip:5090/api
 ```
 
-El script recorre autenticación, CRUD, reglas de dominio y los endpoints de negocio
-(97 verificaciones) y deja la base reseteada al terminar.
+El script recorre autenticación, CRUD, reglas de dominio, pagos con tarjetas de prueba y los
+endpoints de negocio (129 verificaciones, incluidos los casos TC_001 a TC_005 del TP) y deja la base
+reseteada al terminar. La cancelación fuera de plazo se prueba solo si hay un turno dentro de las
+próximas 6 hs en el horario de la cancha.
 
 ## Estructura
 
@@ -181,6 +221,7 @@ api/
 ├── auth.go            # login, registro, JWT, middleware
 ├── crud.go            # CRUD genérico + reglas por colección
 ├── business.go        # endpoints de negocio
+├── payments.go        # pasarela de pagos simulada (tarjetas de prueba y QR)
 ├── seed.go            # carga del seed
 ├── errors.go          # apiError -> { error }
 ├── util.go            # helpers de JSON y fechas

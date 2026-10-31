@@ -10,7 +10,7 @@ estándar de Python.
 import base64
 import json
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import urllib.error
 import urllib.request
 
@@ -58,6 +58,26 @@ def check(name, cond, detail=""):
     RESULTS.append((name, bool(cond), detail))
     mark = "OK " if cond else "FAIL"
     print(f"[{mark}] {name}{(' - ' + detail) if detail else ''}")
+
+
+# Tarjetas de prueba de Mercado Pago (ficticias). El nombre del titular define el resultado.
+VISA_CREDITO = "4509 9535 6623 3704"
+VISA_DEBITO = "4002 7686 9439 5619"
+
+
+def pay(amount, method="Mercado Pago (QR)", number=None, holder="APRO", cvv="123", expiry="11/30", expect=201):
+    body = {"paymentMethod": method, "amount": amount, "concept": "smoke"}
+    if number:
+        body["card"] = {"number": number, "holder": holder, "cvv": cvv, "expiry": expiry}
+    st, tx = call("POST", "/pagos", body)
+    if expect is not None and st != expect:
+        raise AssertionError(f"POST /pagos -> {st} (esperado {expect}): {tx}")
+    return st, tx
+
+
+def stock_of(category):
+    st, items = call("GET", "/stock", expect=200)
+    return next(i for i in items if i["category"] == category)
 
 
 def login_as(email, full=False):
@@ -111,7 +131,8 @@ def main():
     # Canchas: estado y disponibilidad
     st, c = call("PATCH", "/canchas/cancha-1/estado", {"status": "mantenimiento", "maintenanceNotes": "riego"}, expect=200)
     check("cancha a mantenimiento", c["status"] == "mantenimiento")
-    st, _ = call("POST", "/reservas", {"courtId": "cancha-1", "courtName": "Cancha 1", "participants": [{"name": "X", "dni": "1"}], "depositPaid": 100, "totalCost": 200, "courtCost": 200, "durationHours": 1})
+    singles = [{"name": "Juan Sánchez", "dni": "35.678.912"}, {"name": "Melina Romo", "dni": "39.104.556"}]
+    st, _ = call("POST", "/reservas", {"courtId": "cancha-1", "date": in_days(5), "startTime": "10:00", "durationHours": 1, "playersType": "singles", "participants": singles})
     check("reserva en cancha bloqueada -> 409 (RD06)", st == 409)
     call("PATCH", "/canchas/cancha-1/estado", {"status": "disponible"}, expect=200)
     st, c = call("PUT", "/canchas/cancha-1/disponibilidad", {"days": ["Lunes", "Martes"], "openTime": "09:00", "closeTime": "21:00"}, expect=200)
@@ -119,36 +140,123 @@ def main():
     st, _ = call("PUT", "/canchas/cancha-1/disponibilidad", {"days": []})
     check("disponibilidad sin días -> 400", st == 400)
 
-    # Reservas: alta con recibo, modificar, pagar saldo, cancelar dentro y fuera de plazo
-    booking = {"courtId": "cancha-2", "courtName": "Cancha 2 - Dibu Martínez (Ladrillo)", "surfaceType": "Ladrillo",
-               "date": in_days(10), "startTime": "10:00", "endTime": "12:00", "durationHours": 2, "playersType": "dobles",
-               "participants": [{"name": "Juan Sánchez", "dni": "35.678.912", "isLead": True}],
-               "courtCost": 9600, "equipmentCost": 0, "totalCost": 9600, "depositPaid": 4800, "remainingBalance": 4800,
-               "depositPaymentMethod": "Tarjeta de Débito"}
+    # Pasarela simulada: solo tarjetas ficticias; el titular define el resultado
+    st, tx = pay(1000, "Tarjeta de Crédito", VISA_CREDITO)
+    check("pago con tarjeta de prueba aprobado", tx["status"] == "approved" and tx["id"].startswith("MP-") and tx["cardLast4"] == "3704" and "number" not in tx)
+    st, _ = pay(1000, "Tarjeta de Crédito", "4111 1111 1111 1111", expect=None)
+    check("tarjeta que no es de prueba -> 400", st == 400)
+    st, _ = pay(1000, "Tarjeta de Crédito", VISA_DEBITO, expect=None)
+    check("tarjeta de débito como crédito -> 400", st == 400)
+    st, rej = pay(1000, "Tarjeta de Débito", VISA_DEBITO, holder="FUND", expect=None)
+    check("titular FUND -> rechazado por fondos (402)", st == 402 and "saldo" in rej["error"])
+    st, _ = pay(1000, "Tarjeta de Débito", VISA_DEBITO, cvv="999", expect=None)
+    check("código de seguridad inválido -> 402", st == 402)
+    st, _ = pay(1000, "Tarjeta de Débito", VISA_DEBITO, expiry="01/20", expect=None)
+    check("tarjeta vencida -> 402", st == 402)
+    st, _ = pay(0, expect=None)
+    check("pago sin importe -> 400", st == 400)
+
+    # Reservas (TC_003): alta pendiente de pago, seña, validaciones
+    players4 = [{"name": "Juan Sánchez", "dni": "35.678.912", "isLead": True}, {"name": "Franco Medina", "dni": "37.998.045"},
+                {"name": "Ignacio Torres", "dni": "34.402.566"}, {"name": "Lucas Pereyra", "dni": "36.887.213"}]
+    booking = {"courtId": "cancha-2", "date": in_days(10), "startTime": "10:00", "durationHours": 2,
+               "playersType": "dobles", "participants": players4, "totalCost": 1, "depositPaid": 1}
     st, res = call("POST", "/reservas", booking, expect=201)
     rid = res["data"]["id"]
-    check("alta de reserva genera recibo de seña", res["receipt"]["totalPaid"] == 4800 and res["data"]["status"] == "confirmada", rid)
-    st, rec = call("GET", f"/recibos/{res['receipt']['id']}", expect=200)
-    check("recibo persistido", rec["reservationId"] == rid)
-    st, upd = call("PUT", f"/reservas/{rid}", {"durationHours": 3}, expect=200)
-    check("modificar reserva recalcula fin, costo y saldo", upd["endTime"] == "13:00" and upd["courtCost"] == 14400 and upd["remainingBalance"] == 9600)
-    st, paid = call("POST", f"/reservas/{rid}/pagar-saldo", {"paymentMethod": "Tarjeta de Débito"}, expect=200)
-    check("pagar saldo -> finalizada", paid["status"] == "finalizada" and paid["finalReceiptNumber"].startswith("REC-FINAL"))
-    st, res2 = call("POST", "/reservas", booking, expect=201)
-    rid2 = res2["data"]["id"]
-    st, canc = call("POST", f"/reservas/{rid2}/cancelar", expect=200)
-    check("cancelar >= 6hs -> reembolso total", canc["isWithinFreeWindow"] and canc["refund"]["refundType"] == "total" and canc["refund"]["refundAmount"] == 4800)
-    # Las horas de antelación las calcula la API: una reserva de ayer ya está fuera de plazo.
-    st, res3 = call("POST", "/reservas", dict(booking, date=in_days(-1)), expect=201)
-    st, canc2 = call("POST", f"/reservas/{res3['data']['id']}/cancelar", {"hoursInAdvance": 100}, expect=200)
-    check("cancelar < 6hs (ignora hoursInAdvance del cliente) -> cargo 50% + reembolso parcial", (not canc2["isWithinFreeWindow"]) and canc2["penaltyReceipt"]["totalPaid"] == 2400 and canc2["refund"]["refundAmount"] == 2400)
-    st, _ = call("POST", f"/reservas/{res3['data']['id']}/cancelar")
-    check("cancelar dos veces -> 409", st == 409)
-    st, _ = call("DELETE", f"/reservas/{res3['data']['id']}", expect=200)
+    check("alta de reserva queda pendiente de pago con costo de la cancha (RD01)",
+          res["data"]["status"] == "pendiente_pago" and res["data"]["totalCost"] == 9600 and res["data"]["depositAmount"] == 4800
+          and res["data"]["endTime"] == "12:00" and "receipt" not in res, rid)
+    st, _ = call("POST", "/reservas", dict(booking, durationHours=3))
+    check("reserva de más de 2 horas -> 400", st == 400)
+    st, _ = call("POST", "/reservas", dict(booking, date=in_days(-1)))
+    check("reserva con fecha pasada -> 400", st == 400)
+    st, _ = call("POST", "/reservas", dict(booking, participants=players4[:3]))
+    check("dobles con 3 jugadores -> 400", st == 400)
+    st, _ = call("POST", "/reservas", dict(booking, playersType="singles", participants=[players4[0], players4[0]]))
+    check("jugador repetido -> 400", st == 400)
+    st, _ = call("POST", "/reservas", dict(booking, startTime="11:00", participants=[{"name": "A", "dni": "1"}, {"name": "B", "dni": "2"}], playersType="singles"))
+    check("cancha ya reservada en esa franja -> 409", st == 409)
+    st, _ = call("POST", "/reservas", dict(booking, courtId="cancha-3"))
+    check("jugador con otra reserva a la misma hora -> 409", st == 409)
     st, _ = call("POST", "/reservas", dict(booking, date=in_days(31)))
     check("reserva a más de 30 días -> 400 (RD05)", st == 400)
+    st, _ = call("POST", f"/reservas/{rid}/iniciar")
+    check("iniciar una reserva sin seña -> 409 (RD01)", st == 409)
+    st, _ = call("POST", f"/reservas/{rid}/pagar-sena", {})
+    check("seña sin pago -> 400", st == 400)
+    st, small = pay(100)
+    st, _ = call("POST", f"/reservas/{rid}/pagar-sena", {"transactionId": small["id"]})
+    check("seña con un pago por otro importe -> 400", st == 400)
+    st, qr = pay(4800)
+    st, conf = call("POST", f"/reservas/{rid}/pagar-sena", {"transactionId": qr["id"]}, expect=200)
+    check("seña con QR de Mercado Pago confirma la reserva y emite recibo (TC_005)",
+          conf["data"]["status"] == "confirmada" and conf["data"]["depositPaid"] == 4800
+          and conf["receipt"]["transactionId"] == qr["id"] and conf["receipt"]["totalPaid"] == 4800, conf["receipt"]["id"])
+    st, rec = call("GET", f"/recibos/{conf['receipt']['id']}", expect=200)
+    check("recibo de seña persistido con datos de la reserva", rec["reservationId"] == rid and in_days(10) in rec["items"][0]["description"])
+    st, _ = call("POST", f"/reservas/{rid}/pagar-sena", {"transactionId": qr["id"]})
+    check("pagar la seña dos veces -> 409", st == 409)
+    st, upd = call("PUT", f"/reservas/{rid}", {"startTime": "11:00", "status": "finalizada"}, expect=200)
+    check("modificar reserva recalcula el fin y no cambia el estado", upd["endTime"] == "13:00" and upd["status"] == "confirmada")
+    st, _ = call("PUT", f"/reservas/{rid}", {"durationHours": 3})
+    check("modificar a más de 2 horas -> 400", st == 400)
     st, _ = call("PUT", f"/reservas/{rid}", {"date": in_days(31)})
     check("mover reserva a más de 30 días -> 400 (RD05)", st == 400)
+
+    # Stock (TC_001 / TC_002): sin equipamiento no se reserva; se descuenta al iniciar y vuelve al finalizar
+    balls = stock_of("Pelotas")
+    call("PATCH", f"/stock/{balls['id']}/ajuste", {"totalStock": 0}, expect=200)
+    st, err = call("POST", "/reservas", dict(booking, courtId="cancha-3", startTime="15:00"))
+    check("reserva sin pelotas en stock -> 409 (TC_001)", st == 409 and "pelotas" in err["error"])
+    call("PATCH", f"/stock/{balls['id']}/ajuste", {"totalStock": balls["totalStock"]}, expect=200)
+    before = {c: stock_of(c)["availableStock"] for c in ("Redes", "Pelotas", "Raquetas")}
+    st, playing = call("POST", f"/reservas/{rid}/iniciar", expect=200)
+    during = {c: stock_of(c)["availableStock"] for c in ("Redes", "Pelotas", "Raquetas")}
+    check("iniciar alquiler: en juego y descuenta red, pelotas y 4 raquetas (TC_002)",
+          playing["status"] == "en_juego" and during == {"Redes": before["Redes"] - 1, "Pelotas": before["Pelotas"] - 1, "Raquetas": before["Raquetas"] - 4}, str(during))
+    st, _ = call("PATCH", f"/stock/{stock_of('Raquetas')['id']}/ajuste", {"totalStock": 1})
+    check("stock total menor a lo prestado -> 400", st == 400)
+    st, _ = call("POST", f"/reservas/{rid}/cancelar")
+    check("cancelar una reserva en juego -> 409", st == 409)
+    st, _ = call("DELETE", f"/reservas/{rid}")
+    check("eliminar una reserva en juego -> 409", st == 409)
+    st, card = pay(4800, "Tarjeta de Débito", VISA_DEBITO)
+    st, fin = call("POST", f"/reservas/{rid}/pagar-saldo", {"transactionId": card["id"]}, expect=200)
+    after = {c: stock_of(c)["availableStock"] for c in ("Redes", "Pelotas", "Raquetas")}
+    check("pagar saldo con débito finaliza y devuelve el equipamiento (TC_002)",
+          fin["data"]["status"] == "finalizada" and fin["receipt"]["cardLast4"] == "5619" and after == before, str(after))
+
+    # Cancelaciones (RD02-RD04)
+    st, res2 = call("POST", "/reservas", dict(booking, startTime="16:00"), expect=201)
+    rid2 = res2["data"]["id"]
+    st, tx2 = pay(4800)
+    call("POST", f"/reservas/{rid2}/pagar-sena", {"transactionId": tx2["id"]}, expect=200)
+    st, canc = call("POST", f"/reservas/{rid2}/cancelar", expect=200)
+    check("cancelar >= 6hs -> reembolso total", canc["isWithinFreeWindow"] and canc["refund"]["refundType"] == "total" and canc["refund"]["refundAmount"] == 4800)
+    st, _ = call("POST", f"/reservas/{rid2}/cancelar")
+    check("cancelar dos veces -> 409", st == 409)
+    st, _ = call("POST", f"/reservas/{rid2}/pagar-sena", {"transactionId": tx2["id"]})
+    check("un pago no se usa dos veces / reserva cancelada -> 409", st == 409)
+    st, res3 = call("POST", "/reservas", dict(booking, startTime="18:00"), expect=201)
+    st, canc3 = call("POST", f"/reservas/{res3['data']['id']}/cancelar", expect=200)
+    check("cancelar una reserva pendiente de pago no genera reembolso ni cargo", canc3["data"]["status"] == "cancelada" and canc3["refund"] is None)
+    soon = datetime.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=2)
+    if soon.date() == date.today() and 8 <= soon.hour and soon.hour + 1 <= 22:
+        st, res4 = call("POST", "/reservas", dict(booking, date=soon.date().isoformat(), startTime=soon.strftime("%H:%M"), durationHours=1, courtId="cancha-5"), expect=201)
+        st, tx4 = pay(res4["data"]["depositAmount"])
+        call("POST", f"/reservas/{res4['data']['id']}/pagar-sena", {"transactionId": tx4["id"]}, expect=200)
+        st, canc4 = call("POST", f"/reservas/{res4['data']['id']}/cancelar", {"hoursInAdvance": 100}, expect=200)
+        check("cancelar < 6hs (ignora hoursInAdvance del cliente) -> cargo 50% + reembolso parcial",
+              (not canc4["isWithinFreeWindow"]) and canc4["penaltyReceipt"]["totalPaid"] == res4["data"]["depositAmount"] / 2)
+    else:
+        print("[SKIP] cancelación fuera de plazo: no hay un turno dentro de las próximas 6 hs en el horario de la cancha")
+
+    # Recibos: todo recibo lleva un pago aprobado
+    st, _ = call("POST", "/recibos", {"clientName": "C", "clientDni": "1", "concept": "Cuota", "totalPaid": 500, "items": []})
+    check("recibo sin pago -> 400", st == 400)
+    st, tx5 = pay(500, "Tarjeta de Crédito", VISA_CREDITO)
+    st, rec5 = call("POST", "/recibos", {"clientName": "C", "clientDni": "1", "concept": "Cuota", "totalPaid": 500, "items": [], "paymentMethod": "Efectivo", "transactionId": tx5["id"]}, expect=201)
+    check("recibo con pago toma el medio de la transacción", rec5["paymentMethod"] == "Tarjeta de Crédito" and rec5["transactionId"] == tx5["id"])
 
     # Configuración del club (RD02-RD05)
     st, cfg = call("GET", "/configuracion", expect=200)
@@ -159,6 +267,8 @@ def main():
     # Torneos: inscripción, enfrentamiento, reglamento
     st, enr = call("POST", "/torneos/trn-02/inscripciones", {"name": "Jugadora Test", "dni": "1", "partnerName": "Pareja"}, expect=201)
     check("inscripción a torneo", enr["participant"]["name"] == "Jugadora Test")
+    st, _ = call("POST", "/torneos/trn-02/inscripciones", {"name": "Otra", "dni": "2", "partnerName": "Jugadora Test", "partnerDni": "1"})
+    check("inscripción repetida al torneo -> 409", st == 409)
     st, m = call("POST", "/torneos/trn-02/enfrentamientos", {"round": "Cuartos", "p1": "A", "p2": "B", "court": "Cancha 3", "date": "2026-11-14 10:00"}, expect=201)
     st, m2 = call("PUT", f"/torneos/trn-02/enfrentamientos/{m['match']['id']}", {"score": "6-1, 6-2", "winner": "A", "status": "finalizado"}, expect=200)
     check("enfrentamiento de torneo alta + resultado", m2["match"]["winner"] == "A")
@@ -201,6 +311,8 @@ def main():
     st, cls = call("POST", "/clases", {"name": "Clase Smoke", "kind": "entrenamiento", "coachId": "coach-02", "coachName": "X", "maxCapacity": 2, "sessions": ["01/11", "03/11"]}, expect=201)
     cid = cls["id"]
     st, s1 = call("POST", f"/clases/{cid}/alumnos", {"name": "Alumno 1", "dni": "1"}, expect=201)
+    st, _ = call("POST", f"/clases/{cid}/alumnos", {"name": "Alumno 1", "dni": "1"})
+    check("alumno repetido en la clase -> 409", st == 409)
     call("POST", f"/clases/{cid}/alumnos", {"name": "Alumno 2", "dni": "2"}, expect=201)
     st, _ = call("POST", f"/clases/{cid}/alumnos", {"name": "Alumno 3", "dni": "3"})
     check("cupo de clase respetado (RD10) -> 409", st == 409)
@@ -284,10 +396,20 @@ def main():
     check("socio ve solo sus recibos", recs and all(r["clientDni"] == socio_dni for r in recs))
     st, clases = call("GET", "/clases", expect=200)
     check("socio ve clases sin alumnos", clases and all("students" not in c for c in clases))
-    own_booking = dict(booking, participants=[{"name": "Juan Sánchez", "dni": socio_dni}])
-    st, _ = call("POST", "/reservas", dict(booking, participants=[{"name": "Otro", "dni": "1"}]))
+    own_booking = dict(booking, startTime="20:00", playersType="singles", participants=singles)
+    st, _ = call("POST", "/reservas", dict(own_booking, participants=[{"name": "Otro", "dni": "1"}, singles[1]]))
     check("socio no reserva a nombre de otro -> 403", st == 403)
     st, own = call("POST", "/reservas", own_booking, expect=201)
+    socio_token, TOKEN = TOKEN, admin_token
+    st, admin_tx = pay(own["data"]["depositAmount"])
+    TOKEN = socio_token
+    st, _ = call("POST", f"/reservas/{own['data']['id']}/pagar-sena", {"transactionId": admin_tx["id"]})
+    check("socio no usa un pago ajeno -> 403", st == 403)
+    st, own_tx = pay(own["data"]["depositAmount"], "Tarjeta de Crédito", VISA_CREDITO)
+    st, own_conf = call("POST", f"/reservas/{own['data']['id']}/pagar-sena", {"transactionId": own_tx["id"]})
+    check("socio paga la seña de su reserva", st == 200 and own_conf["data"]["status"] == "confirmada")
+    st, _ = call("POST", f"/reservas/{own['data']['id']}/iniciar")
+    check("socio no inicia alquileres -> 403", st == 403)
     st, _ = call("POST", "/reservas/RES-2026-002/cancelar")
     check("socio no cancela reservas ajenas -> 403", st == 403)
     st, _ = call("POST", f"/reservas/{own['data']['id']}/cancelar")
@@ -306,11 +428,17 @@ def main():
     check("socio se inscribe a un torneo", st == 201)
     st, _ = call("POST", "/clases/cls-01/alumnos", {"name": "Juan Sánchez", "dni": socio_dni})
     check("socio se inscribe a una clase", st == 201)
+    st, _ = call("POST", "/clases/cls-01/alumnos", {"name": "Juan Sánchez", "dni": socio_dni})
+    check("socio no se inscribe dos veces a la misma clase -> 409", st == 409)
+    st, clases = call("GET", "/clases", expect=200)
+    check("socio ve en qué clases está inscripto", next(c for c in clases if c["id"] == "cls-01")["enrolled"] and not next(c for c in clases if c["id"] == "cls-02")["enrolled"])
     st, _ = call("POST", "/clases/cls-01/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
     check("socio no toma asistencia -> 403", st == 403)
     lesson = {"coachId": "coach-01", "coachName": "Gustavo Ferrari", "studentName": "Juan Sánchez", "studentDni": socio_dni, "date": "2026-11-12", "time": "10:00"}
     st, _ = call("POST", "/clases-particulares", dict(lesson, kind="clase"))
     check("socio pide clase particular a un profesor", st == 201)
+    st, _ = call("POST", "/clases-particulares", dict(lesson, kind="clase"))
+    check("dos turnos particulares en el mismo horario -> 409", st == 409)
     st, _ = call("POST", "/clases-particulares", dict(lesson, kind="entrenamiento"))
     check("entrenamiento con un profesor -> 400", st == 400)
 
@@ -324,7 +452,7 @@ def main():
     check("profesor toma asistencia en su clase", st == 200)
     st, _ = call("POST", "/clases/cls-04/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
     check("profesor no toma asistencia en clase ajena -> 403", st == 403)
-    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02", kind="entrenamiento"), expect=201)
+    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02", kind="entrenamiento", time="11:00"), expect=201)
     check("clase particular del profesor queda a su nombre y como clase", p["coachId"] == "coach-01" and p["kind"] == "clase")
     st, c1 = call("PUT", "/profesores/coach-01", {"availableHours": "Smoke", "type": "Entrenador"}, expect=200)
     check("profesor edita su ficha sin cambiar su tipo", c1["availableHours"] == "Smoke" and c1["type"] == "Profesor")
@@ -333,7 +461,7 @@ def main():
 
     TOKEN, ent = login_as("entrenador@tenisahora.com", full=True)
     check("login entrenador", ent["rol"] == "Entrenador")
-    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02"), expect=201)
+    st, p = call("POST", "/clases-particulares", dict(lesson, coachId="coach-02", time="12:00"), expect=201)
     check("clase particular del entrenador queda como entrenamiento", p["kind"] == "entrenamiento")
     TOKEN = admin_token
 

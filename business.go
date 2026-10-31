@@ -10,6 +10,7 @@ import (
 	"math"
 	"mime"
 	"net/http"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -133,6 +134,9 @@ func (a *app) stockAdjust(r *http.Request) (int, any, error) {
 		return 0, nil, err
 	}
 	total := math.Max(f(body, "totalStock"), 0)
+	if total < f(item, "inUseStock") {
+		return 0, nil, badRequest(fmt.Sprintf("El stock total no puede ser menor a lo que está prestado en canchas (%s).", numStr(f(item, "inUseStock"))))
+	}
 	available := math.Max(total-f(item, "inUseStock"), 0)
 	item["totalStock"] = total
 	item["availableStock"] = available
@@ -210,6 +214,250 @@ func hoursUntilStart(res M) (float64, error) {
 // Reservas
 // ===========================================================================
 
+// Estados de una reserva: pendiente de pago (registrada, sin seña) -> confirmada (seña del 50 %
+// abonada, RD01) -> en juego (alquiler iniciado, equipamiento descontado del stock) -> finalizada
+// (saldo abonado, equipamiento devuelto). Se cancela mientras está pendiente o confirmada.
+const (
+	resPending   = "pendiente_pago"
+	resConfirmed = "confirmada"
+	resPlaying   = "en_juego"
+	resFinished  = "finalizada"
+	resCancelled = "cancelada"
+)
+
+// Cada alquiler dura como máximo dos horas (consigna).
+const maxRentalHours = 2.0
+
+// Equipamiento obligatorio de cada alquiler: una red, un tubo de pelotas y una raqueta por jugador.
+var equipment = []struct{ key, category, label string }{
+	{"nets", "Redes", "redes"},
+	{"ballTubes", "Pelotas", "pelotas"},
+	{"rackets", "Raquetas", "raquetas"},
+}
+
+func equipmentFor(playersType string) M {
+	rackets := 2.0
+	if playersType == "dobles" {
+		rackets = 4
+	}
+	return M{"nets": 1.0, "ballTubes": 1.0, "rackets": rackets}
+}
+
+func setStockLevels(item M, inUse float64) {
+	available := math.Max(f(item, "totalStock")-inUse, 0)
+	item["inUseStock"] = inUse
+	item["availableStock"] = available
+	item["status"] = stockStatus(available)
+}
+
+// checkEquipment aplica la regla de la consigna: no se alquila una cancha si no hay red, pelotas y
+// raquetas disponibles en stock (TC_001).
+func (a *app) checkEquipment(eq M) error {
+	items, err := a.store.list("stock")
+	if err != nil {
+		return err
+	}
+	missing := []string{}
+	for _, e := range equipment {
+		need, have := f(eq, e.key), 0.0
+		for _, it := range items {
+			if strings.EqualFold(s(it, "category"), e.category) {
+				have += f(it, "availableStock")
+			}
+		}
+		if have < need {
+			missing = append(missing, fmt.Sprintf("%s (hay %s, se necesitan %s)", e.label, numStr(have), numStr(need)))
+		}
+	}
+	if len(missing) > 0 {
+		return conflict("No hay stock suficiente para el alquiler: faltan " + strings.Join(missing, ", ") + ".")
+	}
+	return nil
+}
+
+// takeEquipment descuenta del stock el equipamiento del alquiler y devuelve de qué ítems salió,
+// para restituir exactamente lo mismo al finalizar (TC_002).
+func (a *app) takeEquipment(eq M) ([]any, error) {
+	if err := a.checkEquipment(eq); err != nil {
+		return nil, err
+	}
+	items, err := a.store.list("stock")
+	if err != nil {
+		return nil, err
+	}
+	taken := []any{}
+	for _, e := range equipment {
+		need := f(eq, e.key)
+		for _, it := range items {
+			if need <= 0 || !strings.EqualFold(s(it, "category"), e.category) || f(it, "availableStock") <= 0 {
+				continue
+			}
+			qty := math.Min(need, f(it, "availableStock"))
+			setStockLevels(it, f(it, "inUseStock")+qty)
+			if err := a.store.upsert("stock", it); err != nil {
+				return nil, err
+			}
+			taken = append(taken, M{"itemId": s(it, "id"), "category": e.category, "quantity": qty})
+			need -= qty
+		}
+	}
+	return taken, nil
+}
+
+// returnEquipment devuelve al stock lo que se descontó al iniciar el alquiler.
+func (a *app) returnEquipment(taken []any) error {
+	for _, t := range taken {
+		tm := asMap(t)
+		item, ok, err := a.store.get("stock", s(tm, "itemId"))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue // el ítem se dio de baja mientras estaba prestado
+		}
+		setStockLevels(item, math.Max(f(item, "inUseStock")-f(tm, "quantity"), 0))
+		if err := a.store.upsert("stock", item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// endTime suma la duración al horario de inicio ("HH:MM").
+func endTime(start string, hours float64) string {
+	total := hhmmToMinutes(start) + int(math.Round(hours*60))
+	return fmt.Sprintf("%02d:%02d", total/60, total%60)
+}
+
+// checkSchedule valida fecha, horario y duración de una reserva: no en el pasado, dentro de la
+// antelación máxima del club (RD05) y de hasta dos horas.
+func (a *app) checkSchedule(date, start string, hours float64) error {
+	day, err := time.ParseInLocation("2006-01-02", date, time.Local)
+	if err != nil {
+		return badRequest("La fecha de la reserva no es válida (formato AAAA-MM-DD).")
+	}
+	if _, err := time.Parse("15:04", start); err != nil {
+		return badRequest("El horario de inicio no es válido (formato HH:MM).")
+	}
+	if hours <= 0 || hours > maxRentalHours {
+		return badRequest(fmt.Sprintf("La duración de un alquiler es de hasta %s horas.", numStr(maxRentalHours)))
+	}
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	if day.Before(todayStart) {
+		return badRequest("La fecha de la reserva ya pasó.")
+	}
+	if begins, _ := time.ParseInLocation("2006-01-02 15:04", date+" "+start, time.Local); !begins.After(now) {
+		return badRequest("El horario de la reserva ya pasó.")
+	}
+	return a.checkBookingWindow(date)
+}
+
+// checkParticipants exige los datos de los 2 (singles) o 4 (dobles) jugadores, sin repetir DNI y
+// sin superar la capacidad de la cancha (consigna: reservas para dos o cuatro personas).
+func checkParticipants(res, court M) error {
+	want := 0
+	switch s(res, "playersType") {
+	case "singles":
+		want = 2
+	case "dobles":
+		want = 4
+	default:
+		return badRequest("La modalidad debe ser singles (2 jugadores) o dobles (4 jugadores).")
+	}
+	ps := arr(res, "participants")
+	if len(ps) != want {
+		return badRequest(fmt.Sprintf("Una reserva de %s lleva los datos de %d jugadores (se cargaron %d).", s(res, "playersType"), want, len(ps)))
+	}
+	seen := map[string]bool{}
+	for i, p := range ps {
+		pm := asMap(p)
+		dni := cleanDNI(s(pm, "dni"))
+		if strings.TrimSpace(s(pm, "name")) == "" || dni == "" {
+			return badRequest(fmt.Sprintf("Falta el nombre o el DNI del jugador %d.", i+1))
+		}
+		if seen[dni] {
+			return badRequest(fmt.Sprintf("El DNI %s está repetido entre los jugadores.", s(pm, "dni")))
+		}
+		seen[dni] = true
+	}
+	if capacity := f(court, "capacity"); capacity > 0 && float64(want) > capacity {
+		return badRequest(fmt.Sprintf("%s admite hasta %s jugadores.", s(court, "name"), numStr(capacity)))
+	}
+	return nil
+}
+
+// checkReservationConflict impide reservar dos veces la misma cancha en una franja superpuesta, o
+// anotar a un jugador que ya tiene otra reserva a esa hora. Misma regla que findReservationConflict
+// del front.
+func (a *app) checkReservationConflict(res M, excludeID string) error {
+	docs, err := a.store.list("reservas")
+	if err != nil {
+		return err
+	}
+	from, to := hhmmToMinutes(s(res, "startTime")), hhmmToMinutes(s(res, "endTime"))
+	dnis := map[string]bool{}
+	for _, p := range arr(res, "participants") {
+		if d := cleanDNI(s(asMap(p), "dni")); d != "" {
+			dnis[d] = true
+		}
+	}
+	for _, d := range docs {
+		if s(d, "id") == excludeID || s(d, "status") == resCancelled || s(d, "date") != s(res, "date") {
+			continue
+		}
+		if !(hhmmToMinutes(s(d, "startTime")) < to && from < hhmmToMinutes(s(d, "endTime"))) {
+			continue
+		}
+		when := fmt.Sprintf("el %s de %s a %s", s(d, "date"), s(d, "startTime"), s(d, "endTime"))
+		if s(d, "courtId") == s(res, "courtId") {
+			return conflict(fmt.Sprintf("%s ya está reservada %s.", s(d, "courtName"), when))
+		}
+		for _, p := range arr(d, "participants") {
+			if pm := asMap(p); dnis[cleanDNI(s(pm, "dni"))] {
+				return conflict(fmt.Sprintf("%s ya tiene una reserva %s en %s.", s(pm, "name"), when, s(d, "courtName")))
+			}
+		}
+	}
+	return nil
+}
+
+// checkCourt valida que la cancha exista, no esté en mantenimiento y atienda en ese turno (RD06).
+func (a *app) checkCourt(res M) (M, error) {
+	if s(res, "courtId") == "" {
+		return nil, badRequest("Falta elegir la cancha.")
+	}
+	court, ok, err := a.store.get("canchas", s(res, "courtId"))
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, badRequest(fmt.Sprintf("La cancha %s no existe.", s(res, "courtId")))
+	}
+	if s(court, "status") == "mantenimiento" {
+		return nil, conflict("La cancha está bloqueada por mantenimiento y no admite reservas (RD06).")
+	}
+	if reason := slotBlock(court, s(res, "date"), s(res, "startTime"), f(res, "durationHours")); reason != "" {
+		return nil, conflict(fmt.Sprintf("La cancha no admite reservas en ese turno: %s (RD06).", reason))
+	}
+	return court, nil
+}
+
+// setCosts calcula el costo con la tarifa de la cancha (no con lo que mande el cliente) y la seña
+// del 50 %. Una reserva confirmada conserva la seña que ya pagó.
+func setCosts(res, court M) {
+	courtCost := f(court, "pricePerHour") * f(res, "durationHours")
+	res["courtCost"] = courtCost
+	res["equipmentCost"] = 0.0
+	res["totalCost"] = courtCost
+	deposit := f(res, "depositPaid")
+	if s(res, "status") == resPending {
+		deposit = math.Round(courtCost / 2)
+		res["depositAmount"] = deposit
+	}
+	res["remainingBalance"] = math.Max(courtCost-deposit, 0)
+}
+
 // client devuelve nombre y DNI del titular (primer participante) para los recibos.
 func client(res M) (string, string) {
 	var lead M
@@ -219,25 +467,64 @@ func client(res M) (string, string) {
 	return orDefault(s(lead, "name"), "Socio Tenis Ahora"), orDefault(s(lead, "dni"), "00.000.000")
 }
 
-// createReservationInner da de alta una reserva con recibo de seña (RD01: se confirma con el 50% abonado).
-func (a *app) createReservationInner(body M) (M, error) {
-	if err := a.checkBookingWindow(s(body, "date")); err != nil {
+// rentalLine describe el turno en los recibos.
+func rentalLine(res M) string {
+	return fmt.Sprintf("Alquiler %s hs - %s - %s de %s a %s", numStr(f(res, "durationHours")), s(res, "courtName"), s(res, "date"), s(res, "startTime"), s(res, "endTime"))
+}
+
+// newReceipt arma el recibo de un cobro de la reserva con los datos del pago.
+func (a *app) newReceipt(res M, tx M, concept, cashier string, items []any, total float64) (M, error) {
+	id, err := a.nextID("recibos", nil)
+	if err != nil {
 		return nil, err
 	}
-	if courtID := s(body, "courtId"); courtID != "" {
-		court, ok, err := a.store.get("canchas", courtID)
-		if err != nil {
-			return nil, err
-		}
-		if ok && s(court, "status") == "mantenimiento" {
-			return nil, conflict("La cancha está bloqueada por mantenimiento y no admite reservas (RD06).")
-		}
-		if ok {
-			if reason := slotBlock(court, s(body, "date"), s(body, "startTime"), f(body, "durationHours")); reason != "" {
-				return nil, conflict(fmt.Sprintf("La cancha no admite reservas en ese turno: %s (RD06).", reason))
-			}
-		}
+	name, dni := client(res)
+	receipt := merge(M{
+		"id":            id,
+		"reservationId": s(res, "id"),
+		"clientName":    name,
+		"clientDni":     dni,
+		"concept":       concept,
+		"items":         items,
+		"totalPaid":     total,
+		"status":        "completado",
+		"date":          nowStamp(),
+		"cashierName":   cashier,
+	}, paymentFields(tx))
+	return receipt, a.store.insert("recibos", receipt)
+}
+
+// createReservationInner registra la reserva como pendiente de pago: queda confirmada recién cuando
+// se abona la seña del 50 % (RD01, POST /reservas/{id}/pagar-sena).
+func (a *app) createReservationInner(body M) (M, error) {
+	res := M{
+		"courtId":       s(body, "courtId"),
+		"date":          s(body, "date"),
+		"startTime":     s(body, "startTime"),
+		"durationHours": f(body, "durationHours"),
+		"playersType":   s(body, "playersType"),
+		"participants":  arr(body, "participants"),
+		"notes":         s(body, "notes"),
 	}
+	if err := a.checkSchedule(s(res, "date"), s(res, "startTime"), f(res, "durationHours")); err != nil {
+		return nil, err
+	}
+	res["endTime"] = endTime(s(res, "startTime"), f(res, "durationHours"))
+	court, err := a.checkCourt(res)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkParticipants(res, court); err != nil {
+		return nil, err
+	}
+	if err := a.checkReservationConflict(res, ""); err != nil {
+		return nil, err
+	}
+	res["equipmentAssigned"] = equipmentFor(s(res, "playersType"))
+	if err := a.checkEquipment(asMap(res["equipmentAssigned"])); err != nil {
+		return nil, err
+	}
+
 	count, err := a.store.count("reservas")
 	if err != nil {
 		return nil, err
@@ -254,47 +541,21 @@ func (a *app) createReservationInner(body M) (M, error) {
 		n++
 		id = fmt.Sprintf("RES-%d-%03d-%d", year(), count+1, n)
 	}
-	recID := fmt.Sprintf("REC-50-%d", rand4())
-
-	res := body
 	res["id"] = id
-	res["depositReceiptNumber"] = recID
+	res["courtName"] = fmt.Sprintf("%s (%s)", s(court, "name"), s(court, "surfaceType"))
+	res["surfaceType"] = s(court, "surfaceType")
+	res["status"] = resPending
+	res["depositPaid"] = 0.0
+	res["depositReceiptNumber"] = nil
 	res["remainingPaid"] = false
 	res["finalReceiptNumber"] = nil
-	res["status"] = "confirmada"
-	res["createdAt"] = nowISO()
 	res["cancellationDetails"] = nil
-	if _, ok := res["participants"]; !ok {
-		res["participants"] = []any{}
-	}
+	res["createdAt"] = nowISO()
+	setCosts(res, court)
 	if err := a.store.insert("reservas", res); err != nil {
 		return nil, err
 	}
-
-	name, dni := client(res)
-	receipt := M{
-		"id":            recID,
-		"reservationId": id,
-		"clientName":    name,
-		"clientDni":     dni,
-		"concept":       "Seña 50% Obligatoria - " + s(res, "courtName"),
-		"items": []any{
-			M{"description": fmt.Sprintf("Alquiler %shs %s", numStr(f(res, "durationHours")), s(res, "courtName")), "amount": f(res, "courtCost")},
-			M{"description": "Equipamiento incluido (Red, Pelotas, Raquetas)", "amount": 0},
-			M{"description": "Total Turno", "amount": f(res, "totalCost")},
-			M{"description": "Cobro de Seña 50% para Confirmación", "amount": f(res, "depositPaid")},
-		},
-		"totalPaid":     f(res, "depositPaid"),
-		"paymentMethod": orDefault(s(res, "depositPaymentMethod"), "Mercado Pago (QR)"),
-		"status":        "completado",
-		"date":          nowStamp(),
-		"qrData":        "https://mpago.la/pos/tenisahora/" + strings.ToLower(recID),
-		"cashierName":   "Cobro Digital Online",
-	}
-	if err := a.store.insert("recibos", receipt); err != nil {
-		return nil, err
-	}
-	return M{"data": res, "receipt": receipt}, nil
+	return M{"data": res}, nil
 }
 
 // POST /api/reservas
@@ -324,7 +585,7 @@ func (a *app) reservationsOccupancy(r *http.Request) (int, any, error) {
 	}
 	out := []M{}
 	for _, d := range docs {
-		if s(d, "status") == "cancelada" {
+		if s(d, "status") == resCancelled {
 			continue
 		}
 		slot := M{}
@@ -336,69 +597,162 @@ func (a *app) reservationsOccupancy(r *http.Request) (int, any, error) {
 	return http.StatusOK, out, nil
 }
 
-// recalculateReservation recalcula hora de fin, costo y saldo al modificar una reserva (PUT /api/reservas/{id}).
+// Los cambios de estado, los cobros y los costos solo los hacen los endpoints de negocio.
+var reservationReadOnly = []string{
+	"status", "depositAmount", "depositPaid", "depositPaymentMethod", "depositTransactionId", "depositReceiptNumber",
+	"remainingPaid", "finalReceiptNumber", "finalPaymentMethod", "finalTransactionId", "cancellationDetails",
+	"equipmentAssigned", "equipmentTaken", "courtName", "surfaceType", "courtCost", "equipmentCost", "totalCost",
+	"remainingBalance", "endTime", "createdAt", "confirmedAt", "startedAt", "finishedAt",
+}
+
+// recalculateReservation aplica un cambio de horario, cancha o jugadores (PUT /api/reservas/{id}),
+// antes de que se juegue y sujeto a disponibilidad.
 func (a *app) recalculateReservation(existing, patch M) (M, error) {
+	if st := s(existing, "status"); st != resPending && st != resConfirmed {
+		return nil, conflict("Solo se modifican reservas pendientes de pago o confirmadas.")
+	}
+	for _, k := range reservationReadOnly {
+		delete(patch, k)
+	}
+	changed := func(keys ...string) bool {
+		for _, k := range keys {
+			if v, ok := patch[k]; ok && !reflect.DeepEqual(v, existing[k]) {
+				return true
+			}
+		}
+		return false
+	}
 	next := merge(existing, patch)
 	next["id"] = existing["id"]
-	dur := f(next, "durationHours")
-	if dur <= 0 {
-		dur = 1
-	}
-	_, startChanged := patch["startTime"]
-	_, durationChanged := patch["durationHours"]
-	_, courtChanged := patch["courtId"]
-	_, dateChanged := patch["date"]
-	// Solo se valida una fecha nueva: si el club achica la antelación, las reservas ya tomadas siguen editables.
-	if dateChanged && s(patch, "date") != s(existing, "date") {
-		if err := a.checkBookingWindow(s(next, "date")); err != nil {
+	scheduleChanged := changed("date", "startTime", "durationHours")
+	courtChanged := changed("courtId")
+	playersChanged := changed("participants", "playersType")
+
+	if scheduleChanged {
+		if err := a.checkSchedule(s(next, "date"), s(next, "startTime"), f(next, "durationHours")); err != nil {
 			return nil, err
 		}
+		next["endTime"] = endTime(s(next, "startTime"), f(next, "durationHours"))
 	}
-
-	if startChanged || durationChanged {
-		hh, mm, _ := strings.Cut(s(next, "startTime"), ":")
-		h, err := strconv.ParseInt(strings.TrimSpace(hh), 10, 64)
-		if err != nil {
-			h = 8
-		}
-		m, err := strconv.ParseInt(strings.TrimSpace(mm), 10, 64)
-		if err != nil {
-			m = 0
-		}
-		totalMin := h*60 + m + int64(math.Round(dur*60))
-		next["endTime"] = fmt.Sprintf("%02d:%02d", totalMin/60, totalMin%60)
-	}
-
 	court, ok, err := a.store.get("canchas", s(next, "courtId"))
 	if err != nil {
 		return nil, err
 	}
-	if ok {
-		if courtChanged && s(court, "status") == "mantenimiento" {
-			return nil, conflict("La cancha seleccionada está bloqueada por mantenimiento (RD06).")
+	if !ok {
+		return nil, badRequest(fmt.Sprintf("La cancha %s no existe.", s(next, "courtId")))
+	}
+	if scheduleChanged || courtChanged {
+		if _, err := a.checkCourt(next); err != nil {
+			return nil, err
 		}
-		if courtChanged || dateChanged || startChanged || durationChanged {
-			if reason := slotBlock(court, s(next, "date"), s(next, "startTime"), dur); reason != "" {
-				return nil, conflict(fmt.Sprintf("La cancha no admite reservas en ese turno: %s (RD06).", reason))
-			}
+	}
+	if playersChanged || courtChanged {
+		if err := checkParticipants(next, court); err != nil {
+			return nil, err
 		}
-		if courtChanged || durationChanged {
-			if courtChanged {
-				next["courtName"] = fmt.Sprintf("%s (%s)", s(court, "name"), s(court, "surfaceType"))
-				next["surfaceType"] = s(court, "surfaceType")
-			}
-			courtCost := f(court, "pricePerHour") * dur
-			total := courtCost + f(next, "equipmentCost")
-			next["courtCost"] = courtCost
-			next["totalCost"] = total
-			next["remainingBalance"] = math.Max(total-f(next, "depositPaid"), 0)
+		next["equipmentAssigned"] = equipmentFor(s(next, "playersType"))
+	}
+	if scheduleChanged || courtChanged || playersChanged {
+		if err := a.checkReservationConflict(next, s(existing, "id")); err != nil {
+			return nil, err
 		}
+	}
+	if courtChanged {
+		next["courtName"] = fmt.Sprintf("%s (%s)", s(court, "name"), s(court, "surfaceType"))
+		next["surfaceType"] = s(court, "surfaceType")
+	}
+	if courtChanged || scheduleChanged {
+		setCosts(next, court)
 	}
 	next["updatedAt"] = nowISO()
 	return next, nil
 }
 
-// POST /api/reservas/{id}/pagar-saldo  { paymentMethod }
+// POST /api/reservas/{id}/pagar-sena  { transactionId }
+// Cobra la seña del 50 % con un pago aprobado, emite el recibo y confirma la reserva (RD01).
+func (a *app) payDeposit(r *http.Request) (int, any, error) {
+	body, err := readJSON(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	id := r.PathValue("id")
+	res, err := a.store.require("reservas", id)
+	if err != nil {
+		return 0, nil, err
+	}
+	switch s(res, "status") {
+	case resPending:
+	case resCancelled:
+		return 0, nil, conflict("La reserva está cancelada.")
+	default:
+		return 0, nil, conflict("La seña de esta reserva ya fue abonada.")
+	}
+	if err := a.checkEquipment(asMap(res["equipmentAssigned"])); err != nil {
+		return 0, nil, err
+	}
+	deposit := f(res, "depositAmount")
+	tx, err := a.consumePayment(claimsOf(r), s(body, "transactionId"), deposit, "reservas/"+id)
+	if err != nil {
+		return 0, nil, err
+	}
+	receipt, err := a.newReceipt(res, tx, "Seña 50 % - "+s(res, "courtName"), "Cobro digital online", []any{
+		M{"description": rentalLine(res), "amount": f(res, "courtCost")},
+		M{"description": "Equipamiento incluido (red, pelotas y raquetas)", "amount": 0},
+		M{"description": "Total del turno", "amount": f(res, "totalCost")},
+		M{"description": "Seña 50 % para confirmar la reserva", "amount": deposit},
+	}, deposit)
+	if err != nil {
+		return 0, nil, err
+	}
+	res["status"] = resConfirmed
+	res["depositPaid"] = deposit
+	res["depositPaymentMethod"] = s(tx, "paymentMethod")
+	res["depositTransactionId"] = s(tx, "id")
+	res["depositReceiptNumber"] = s(receipt, "id")
+	res["confirmedAt"] = nowISO()
+	if err := a.store.upsert("reservas", res); err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, M{"data": res, "receipt": receipt}, nil
+}
+
+// POST /api/reservas/{id}/iniciar
+// Registra el inicio del alquiler y descuenta del stock el equipamiento asignado (TC_002). Sin
+// stock no se inicia (TC_001).
+func (a *app) startRental(r *http.Request) (int, any, error) {
+	id := r.PathValue("id")
+	res, err := a.store.require("reservas", id)
+	if err != nil {
+		return 0, nil, err
+	}
+	switch s(res, "status") {
+	case resConfirmed:
+	case resPending:
+		return 0, nil, conflict("La reserva no tiene la seña abonada: no está confirmada (RD01).")
+	default:
+		return 0, nil, conflict("Solo se inicia el alquiler de una reserva confirmada.")
+	}
+	if court, ok, err := a.store.get("canchas", s(res, "courtId")); err != nil {
+		return 0, nil, err
+	} else if ok && s(court, "status") == "mantenimiento" {
+		return 0, nil, conflict("La cancha está bloqueada por mantenimiento (RD06).")
+	}
+	taken, err := a.takeEquipment(asMap(res["equipmentAssigned"]))
+	if err != nil {
+		return 0, nil, err
+	}
+	res["status"] = resPlaying
+	res["equipmentTaken"] = taken
+	res["startedAt"] = nowISO()
+	if err := a.store.upsert("reservas", res); err != nil {
+		return 0, nil, err
+	}
+	return http.StatusOK, res, nil
+}
+
+// POST /api/reservas/{id}/pagar-saldo  { transactionId }
+// Al terminar el partido: cobra el 50 % restante, emite el recibo final, devuelve el equipamiento
+// al stock y da por finalizado el alquiler (TC_002).
 func (a *app) payRemaining(r *http.Request) (int, any, error) {
 	body, err := readJSON(r)
 	if err != nil {
@@ -409,57 +763,77 @@ func (a *app) payRemaining(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	if b(res, "remainingPaid", false) {
+	switch s(res, "status") {
+	case resPlaying:
+	case resFinished:
 		return 0, nil, conflict("El saldo de esta reserva ya fue liquidado.")
-	}
-	if s(res, "status") == "cancelada" {
+	case resCancelled:
 		return 0, nil, conflict("La reserva está cancelada.")
+	default:
+		return 0, nil, conflict("Primero hay que registrar el inicio del alquiler.")
 	}
-	finalID := fmt.Sprintf("REC-FINAL-%d", rand4())
+	remaining := f(res, "remainingBalance")
+	tx, err := a.consumePayment(claimsOf(r), s(body, "transactionId"), remaining, "reservas/"+id)
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := a.returnEquipment(arr(res, "equipmentTaken")); err != nil {
+		return 0, nil, err
+	}
+	receipt, err := a.newReceipt(res, tx, "Saldo 50 % - "+s(res, "courtName"), "Recepción del club", []any{
+		M{"description": rentalLine(res), "amount": f(res, "totalCost")},
+		M{"description": fmt.Sprintf("Seña abonada (recibo %s)", s(res, "depositReceiptNumber")), "amount": f(res, "depositPaid")},
+		M{"description": "Saldo restante al finalizar el partido", "amount": remaining},
+	}, remaining)
+	if err != nil {
+		return 0, nil, err
+	}
+	res["status"] = resFinished
 	res["remainingPaid"] = true
-	res["status"] = "finalizada"
-	res["finalReceiptNumber"] = finalID
+	res["finalPaymentMethod"] = s(tx, "paymentMethod")
+	res["finalTransactionId"] = s(tx, "id")
+	res["finalReceiptNumber"] = s(receipt, "id")
+	res["finishedAt"] = nowISO()
 	if err := a.store.upsert("reservas", res); err != nil {
 		return 0, nil, err
 	}
-
-	name, dni := client(res)
-	receipt := M{
-		"id":            finalID,
-		"reservationId": id,
-		"clientName":    name,
-		"clientDni":     dni,
-		"concept":       "Liquidación Final 50% Saldo - " + s(res, "courtName"),
-		"items":         []any{M{"description": "Saldo restante 50% de turno finalizado", "amount": f(res, "remainingBalance")}},
-		"totalPaid":     f(res, "remainingBalance"),
-		"paymentMethod": orDefault(s(body, "paymentMethod"), "Mercado Pago (QR)"),
-		"status":        "completado",
-		"date":          nowStamp(),
-		"qrData":        "https://mpago.la/pos/tenisahora/" + strings.ToLower(finalID),
-		"cashierName":   "Recepción del Club",
-	}
-	if err := a.store.insert("recibos", receipt); err != nil {
-		return 0, nil, err
-	}
-	return http.StatusOK, res, nil
+	return http.StatusOK, M{"data": res, "receipt": receipt}, nil
 }
 
 // POST /api/reservas/{id}/cancelar
 // RD02-RD04: con la antelación mínima del club (o más) corresponde reembolso total; con menos, se
 // retiene el porcentaje configurado de la seña como cargo y se reintegra el resto. Las horas se
-// calculan contra el inicio de la reserva, no las informa quien cancela.
+// calculan contra el inicio de la reserva, no las informa quien cancela. Una reserva pendiente de
+// pago se anula sin cargo porque no se abonó nada.
 func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 	id := r.PathValue("id")
 	res, err := a.store.require("reservas", id)
 	if err != nil {
 		return 0, nil, err
 	}
-	if s(res, "status") == "cancelada" {
+	status := s(res, "status")
+	switch status {
+	case resPending, resConfirmed:
+	case resCancelled:
 		return 0, nil, conflict("La reserva ya está cancelada.")
+	default:
+		return 0, nil, conflict("No se puede cancelar una reserva en juego o finalizada.")
 	}
 	hours, err := hoursUntilStart(res)
 	if err != nil {
 		return 0, nil, err
+	}
+	if status == resPending {
+		res["status"] = resCancelled
+		res["cancellationDetails"] = M{
+			"cancelledAt":    nowISO(),
+			"hoursInAdvance": hours,
+			"policyApplied":  "Reserva sin seña abonada: se anula sin cargo ni reembolso.",
+		}
+		if err := a.store.upsert("reservas", res); err != nil {
+			return 0, nil, err
+		}
+		return http.StatusOK, M{"data": res, "isWithinFreeWindow": true, "refund": nil, "penaltyReceipt": nil}, nil
 	}
 	cfg, err := a.clubConfig()
 	if err != nil {
@@ -472,7 +846,7 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 	if within {
 		policy = fmt.Sprintf("Cancelación anticipada (>=%shs): Reembolso de seña según política.", numStr(freeHours))
 	}
-	res["status"] = "cancelada"
+	res["status"] = resCancelled
 	res["cancellationDetails"] = M{
 		"cancelledAt":    nowISO(),
 		"hoursInAdvance": hours,
@@ -484,12 +858,12 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 
 	name, dni := client(res)
 	deposit := f(res, "depositPaid")
-	refundCount, err := a.store.count("reembolsos")
+	refundID, err := a.nextID("reembolsos", nil)
 	if err != nil {
 		return 0, nil, err
 	}
 	refund := M{
-		"id":                   fmt.Sprintf("RMB-%d-%04d", year(), refundCount+9),
+		"id":                   refundID,
 		"clientName":           name,
 		"clientDni":            dni,
 		"relatedReservationId": id,
@@ -507,8 +881,12 @@ func (a *app) cancelReservation(r *http.Request) (int, any, error) {
 		refund["refundMethod"] = "Devolución a " + orDefault(s(res, "depositPaymentMethod"), "medio de pago original")
 	} else {
 		retained := math.Round(deposit * retentionPct / 100)
+		receiptID, err := a.nextID("recibos", nil)
+		if err != nil {
+			return 0, nil, err
+		}
 		receipt := M{
-			"id":            fmt.Sprintf("REC-CARGO-%d", rand4()),
+			"id":            receiptID,
 			"reservationId": id,
 			"clientName":    name,
 			"clientDni":     dni,
@@ -644,6 +1022,33 @@ func (a *app) downloadDocument(w http.ResponseWriter, r *http.Request) {
 // ===========================================================================
 // Torneos y ligas
 // ===========================================================================
+// enrolledByDni informa si el DNI ya figura entre los inscriptos, como titular o como pareja.
+func enrolledByDni(participants []any, dni string) bool {
+	target := cleanDNI(dni)
+	if target == "" {
+		return false
+	}
+	for _, p := range participants {
+		pm := asMap(p)
+		if cleanDNI(s(pm, "dni")) == target || cleanDNI(s(pm, "partnerDni")) == target {
+			return true
+		}
+	}
+	return false
+}
+
+// checkEnrollment valida cupo e inscripción repetida de un torneo o una liga.
+func checkEnrollment(doc, body M, what string) error {
+	list := arr(doc, "participants")
+	if enrolledByDni(list, s(body, "dni")) || enrolledByDni(list, s(body, "partnerDni")) {
+		return conflict(fmt.Sprintf("Ya hay una inscripción a %s con ese DNI.", what))
+	}
+	if max := f(doc, "maxParticipants"); max > 0 && float64(len(list)) >= max {
+		return conflict(fmt.Sprintf("%s alcanzó el cupo máximo de inscriptos.", strings.ToUpper(what[:1])+what[1:]))
+	}
+	return nil
+}
+
 func newParticipant(body M, prefix string) M {
 	return M{
 		"id":          fmt.Sprintf("%s-%d", prefix, nowMillis()),
@@ -702,10 +1107,10 @@ func (a *app) tournamentEnroll(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	list := arr(t, "participants")
-	if max := f(t, "maxParticipants"); max > 0 && float64(len(list)) >= max {
-		return 0, nil, conflict("El torneo alcanzó el cupo máximo de inscriptos.")
+	if err := checkEnrollment(t, body, "este torneo"); err != nil {
+		return 0, nil, err
 	}
+	list := arr(t, "participants")
 	p := newParticipant(body, "p")
 	list = append(list, p)
 	t["currentEnrolled"] = len(list)
@@ -859,10 +1264,10 @@ func (a *app) leagueEnroll(r *http.Request) (int, any, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	list := arr(l, "participants")
-	if max := f(l, "maxParticipants"); max > 0 && float64(len(list)) >= max {
-		return 0, nil, conflict("La liga alcanzó el cupo máximo de inscriptos.")
+	if err := checkEnrollment(l, body, "esta liga"); err != nil {
+		return 0, nil, err
 	}
+	list := arr(l, "participants")
 	p := newParticipant(body, "lp")
 	list = append(list, p)
 	standings := arr(l, "standings")
@@ -1073,6 +1478,11 @@ func (a *app) classEnroll(r *http.Request) (int, any, error) {
 		return 0, nil, badRequest("El nombre del alumno es obligatorio.")
 	}
 	students := arr(cls, "students")
+	for _, st := range students {
+		if dni := cleanDNI(s(body, "dni")); dni != "" && cleanDNI(s(asMap(st), "dni")) == dni {
+			return 0, nil, conflict(fmt.Sprintf("Ya hay un alumno inscripto en \"%s\" con ese DNI.", s(cls, "name")))
+		}
+	}
 	capacity := int(capTo30(f(cls, "maxCapacity")))
 	if len(students) >= capacity {
 		return 0, nil, conflict(fmt.Sprintf("No es posible agregar más alumnos: el cupo de %d está completo.", capacity))

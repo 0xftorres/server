@@ -206,12 +206,16 @@ func (a *app) routes(frontendDist string) http.Handler {
 	mux.HandleFunc("GET /api/documentos/{id}", a.requireAuth(a.downloadDocument))
 	// Configuración del club: plazos de reserva y cancelación fijados por el club (solo consulta).
 	protected("GET /api/configuracion", a.getClubConfig)
-	// Reservas (alta propia: genera recibo de seña)
+	// Reservas: alta pendiente de pago -> seña -> inicio del alquiler -> saldo
 	protected("GET /api/reservas", guard(membersAndStaff, a.listReservations))
 	protected("GET /api/reservas/ocupacion", guard(membersAndStaff, a.reservationsOccupancy))
 	protected("POST /api/reservas", guard(reservationCreate, a.createReservation))
+	protected("POST /api/reservas/{id}/pagar-sena", guard(a.reservationOwner, a.payDeposit))
+	protected("POST /api/reservas/{id}/iniciar", guard(staffOnly, a.startRental))
 	protected("POST /api/reservas/{id}/pagar-saldo", guard(staffOnly, a.payRemaining))
 	protected("POST /api/reservas/{id}/cancelar", guard(a.reservationOwner, a.cancelReservation))
+	// Pagos: pasarela simulada (débito, crédito y QR de Mercado Pago con tarjetas de prueba)
+	protected("POST /api/pagos", guard(membersAndStaff, a.createPayment))
 	// Torneos
 	protected("PUT /api/torneos/{id}/reglamento", guard(staffOnly, a.tournamentRules))
 	protected("POST /api/torneos/{id}/inscripciones", guard(selfEnrollment, a.tournamentEnroll))
