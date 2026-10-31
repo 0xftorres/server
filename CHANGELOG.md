@@ -38,6 +38,10 @@ Formato: [Keep a Changelog](https://keepachangelog.com/es/1.1.0/). Versionado se
   Para aplicarlo en una base ya creada: `POST /api/admin/reset` o borrar el archivo SQLite.
 
 ### Corregido
+- Un profesional puede consultar `GET /api/socios`: sin eso no podía elegir al alumno de un turno
+  particular (403 y lista vacía).
+- Los torneos y ligas del seed traen `competitionTypeId`; sin él el formulario de modificación no se
+  podía guardar.
 - Un usuario que edita su propio perfil solo puede cambiar nombre, teléfono y foto: cualquier otro
   campo (`role`, `email`, `dni`, descuentos) responde 403 en vez de ignorarse.
 

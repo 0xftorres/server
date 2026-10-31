@@ -1712,8 +1712,9 @@ func computeRefund(d M) (M, error) {
 	return d, nil
 }
 
-// GET /api/socios: padrón reducido para elegir compañeros al reservar. Solo lo necesario para
-// registrar a un participante; teléfono, email y dirección quedan para el personal.
+// GET /api/socios: padrón reducido para elegir compañeros al reservar o al alumno de un turno
+// particular (lo consultan socios, profesionales y personal). Solo lo necesario para registrar a un
+// participante; teléfono, email y dirección quedan para el personal.
 func (a *app) listMembers(_ *http.Request) (int, any, error) {
 	users, err := a.store.list("usuarios")
 	if err != nil {

@@ -448,6 +448,8 @@ def main():
     check("profesor ve solo sus clases, con alumnos", clases and all(c["coachId"] == "coach-01" and "students" in c for c in clases))
     st, _ = call("GET", "/reservas")
     check("profesor no ve reservas -> 403", st == 403)
+    st, socios = call("GET", "/socios")
+    check("profesor consulta el padrón reducido para elegir alumno", st == 200 and socios and "phone" not in socios[0])
     st, _ = call("POST", "/clases/cls-01/asistencia/sesion", {"sessionIndex": 0, "status": "P"})
     check("profesor toma asistencia en su clase", st == 200)
     st, _ = call("POST", "/clases/cls-04/asistencia/sesion", {"sessionIndex": 0, "status": "P"})

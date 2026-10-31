@@ -1062,6 +1062,7 @@
   "torneos": [
     {
       "id": "trn-01",
+      "competitionTypeId": "cmp-elim",
       "name": "Torneo Primavera 2026 Singles Caballeros",
       "category": "Masculino",
       "modality": "Singles",
@@ -1363,6 +1364,7 @@
     },
     {
       "id": "trn-02",
+      "competitionTypeId": "cmp-dobles",
       "name": "Torneo de Dobles Damas - Noviembre 2026",
       "category": "Femenino",
       "modality": "Pareja",
@@ -1417,6 +1419,7 @@
     },
     {
       "id": "trn-03",
+      "competitionTypeId": "cmp-elim",
       "name": "Torneo Invierno 2026 Singles Damas",
       "category": "Femenino",
       "modality": "Singles",
@@ -1579,6 +1582,7 @@
   "ligas": [
     {
       "id": "liga-01",
+      "competitionTypeId": "cmp-liga",
       "name": "Liga Primavera Singles Caballeros",
       "category": "Masculino",
       "modality": "Singles",
@@ -1924,6 +1928,7 @@
     },
     {
       "id": "liga-02",
+      "competitionTypeId": "cmp-liga",
       "name": "Liga de Dobles Mixto",
       "category": "Mixto",
       "modality": "Pareja",

@@ -240,7 +240,7 @@ func (a *app) routes(frontendDist string) http.Handler {
 	protected("POST /api/clases-particulares/{id}/cancelar", guard(a.privateLessonOwner, a.privateCancel))
 	// Caja
 	protected("PUT /api/usuarios/{id}/descuentos", guard(staffOnly, a.userDiscounts))
-	protected("GET /api/socios", guard(membersAndStaff, a.listMembers))
+	protected("GET /api/socios", a.listMembers)
 	// CRUD genérico: los permisos por colección están en guardCreate / guardUpdate / guardDelete y visible.
 	// CRUD genérico
 	protected("GET /api/{collection}", a.list)

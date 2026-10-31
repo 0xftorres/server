@@ -333,7 +333,7 @@ T1_PLAYERS = ["Facundo Molina", "Hernán Ortiz", "Tomás Benítez", "Pablo Quiro
               "Ignacio Torres", "Rodrigo Aguirre", "Nicolás Ledesma", "Juan Sánchez", "Franco Medina", "Gonzalo Cabrera", "Matías Giménez", "Federico Luna"]
 C1, C2 = "Cancha 1", "Cancha 2"
 TRN_01 = {
-    "id": "trn-01", "name": "Torneo Primavera 2026 Singles Caballeros", "category": "Masculino", "modality": "Singles", "surfaceRequired": "Ladrillo",
+    "id": "trn-01", "competitionTypeId": "cmp-elim", "name": "Torneo Primavera 2026 Singles Caballeros", "category": "Masculino", "modality": "Singles", "surfaceRequired": "Ladrillo",
     "startDate": "2026-10-17", "endDate": "2026-11-01", "registrationFee": 8000, "maxParticipants": 16, "currentEnrolled": 16, "status": "en_curso",
     "description": "Torneo de eliminación directa a 16 jugadores en polvo de ladrillo. Octavos y cuartos en fines de semana consecutivos; semifinales y final el último fin de semana.",
     "internalRules": "Partidos al mejor de 3 sets con tie-break en todos los sets. Tolerancia de espera de 15 minutos; pasado ese tiempo se pierde el partido por W.O. Pelotas provistas por el club.",
@@ -368,7 +368,7 @@ TRN_01 = {
 T2_LEADS = ["Melina Romo", "Camila Rodríguez", "Agustina Herrera", "Julieta Vega"]
 T2_PARTNERS = ["Sofía Acosta", "Valentina Ríos", "Florencia Castro", "Martina Suárez"]
 TRN_02 = {
-    "id": "trn-02", "name": "Torneo de Dobles Damas - Noviembre 2026", "category": "Femenino", "modality": "Pareja", "surfaceRequired": "Cemento",
+    "id": "trn-02", "competitionTypeId": "cmp-dobles", "name": "Torneo de Dobles Damas - Noviembre 2026", "category": "Femenino", "modality": "Pareja", "surfaceRequired": "Cemento",
     "startDate": "2026-11-14", "endDate": "2026-11-15", "registrationFee": 12000, "maxParticipants": 8, "currentEnrolled": 4, "status": "inscripcion_abierta",
     "description": "Torneo femenino por parejas en canchas de cemento. Cuadro a 8 parejas; se juega en un fin de semana.",
     "internalRules": "Partidos a dos sets con punto de oro en 40-40. En caso de empate en sets se define por match tie-break a 10 puntos.",
@@ -378,7 +378,7 @@ TRN_02 = {
 T3_PLAYERS = ["Melina Romo", "Julieta Vega", "Valentina Ríos", "Martina Suárez", "Sofía Acosta", "Camila Rodríguez", "Agustina Herrera", "Florencia Castro"]
 C3 = "Cancha 3"
 TRN_03 = {
-    "id": "trn-03", "name": "Torneo Invierno 2026 Singles Damas", "category": "Femenino", "modality": "Singles", "surfaceRequired": "Cemento",
+    "id": "trn-03", "competitionTypeId": "cmp-elim", "name": "Torneo Invierno 2026 Singles Damas", "category": "Femenino", "modality": "Singles", "surfaceRequired": "Cemento",
     "startDate": "2026-08-08", "endDate": "2026-08-16", "registrationFee": 7000, "maxParticipants": 8, "currentEnrolled": 8, "status": "finalizado",
     "description": "Torneo femenino de eliminación directa a 8 jugadoras en cemento.",
     "internalRules": "Partidos al mejor de 3 sets con tie-break en todos los sets. Tolerancia de espera de 15 minutos.",
@@ -461,7 +461,7 @@ standings = sorted(table.values(), key=lambda t: (-t["points"], -t["dif"], t["na
 standings = [dict({"rank": i + 1}, **t) for i, t in enumerate(standings)]
 
 LIGA_01 = {
-    "id": "liga-01", "name": "Liga Primavera Singles Caballeros", "category": "Masculino", "modality": "Singles", "surfaceRequired": "Ladrillo",
+    "id": "liga-01", "competitionTypeId": "cmp-liga", "name": "Liga Primavera Singles Caballeros", "category": "Masculino", "modality": "Singles", "surfaceRequired": "Ladrillo",
     "startDate": "2026-10-04", "endDate": "2026-12-13", "registrationFee": 15000, "maxParticipants": 8, "currentEnrolled": 8, "status": "en_curso",
     "description": "Liga todos contra todos a una rueda, con una jornada por fin de semana en polvo de ladrillo.",
     "internalRules": "Cada partido ganado suma 3 puntos. Partidos al mejor de 3 sets. Desempate en la tabla: 1) diferencia de sets, 2) resultado entre ambos.",
@@ -473,7 +473,7 @@ LIGA_01 = {
 L2_LEADS = ["Melina Romo", "Sofía Acosta", "Camila Rodríguez"]
 L2_PARTNERS = ["Lucas Pereyra", "Matías Giménez", "Nicolás Ledesma"]
 LIGA_02 = {
-    "id": "liga-02", "name": "Liga de Dobles Mixto", "category": "Mixto", "modality": "Pareja", "surfaceRequired": "Cemento",
+    "id": "liga-02", "competitionTypeId": "cmp-liga", "name": "Liga de Dobles Mixto", "category": "Mixto", "modality": "Pareja", "surfaceRequired": "Cemento",
     "startDate": "2026-11-07", "endDate": "2026-12-19", "registrationFee": 20000, "maxParticipants": 8, "currentEnrolled": 3, "status": "inscripcion_abierta",
     "description": "Liga de dobles mixto por puntos en canchas de cemento. Una jornada por sábado.",
     "internalRules": "Partidos a dos sets con punto de oro; match tie-break a 10 si empatan. Cada pareja debe presentar su lista de buena fe antes de la primera jornada.",
